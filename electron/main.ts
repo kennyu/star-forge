@@ -122,3 +122,75 @@ ipcMain.handle('ffmpeg:getMetadata', async (_, filePath: string) => {
   })
 })
 
+// Export video with FFmpeg
+ipcMain.handle('ffmpeg:export', async (event, options: {
+  inputPath: string,
+  outputPath: string,
+  quality: '720p' | '1080p' | 'source',
+  duration: number
+}) => {
+  return new Promise((resolve, reject) => {
+    const { inputPath, outputPath, quality, duration } = options
+
+    // Build FFmpeg arguments based on quality
+    const args = [
+      '-i', inputPath,
+      '-c:v', 'libx264',  // H.264 codec
+      '-preset', 'medium', // Encoding speed/quality balance
+      '-c:a', 'aac',       // AAC audio codec
+      '-b:a', '192k',      // Audio bitrate
+      '-movflags', '+faststart', // Web optimization
+    ]
+
+    // Add resolution/quality settings
+    if (quality === '720p') {
+      args.push('-vf', 'scale=-2:720', '-b:v', '2500k')
+    } else if (quality === '1080p') {
+      args.push('-vf', 'scale=-2:1080', '-b:v', '5000k')
+    } else {
+      // Source quality - copy if possible, or use high quality
+      args.push('-b:v', '8000k')
+    }
+
+    args.push('-y', outputPath) // Overwrite output file
+
+    const ffmpegProcess = spawn(ffmpeg.path, args)
+
+    let errorOutput = ''
+
+    // Parse progress from FFmpeg stderr
+    ffmpegProcess.stderr.on('data', (data) => {
+      const output = data.toString()
+      errorOutput += output
+
+      // Extract time progress (format: time=00:00:10.00)
+      const timeMatch = output.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/)
+      if (timeMatch && duration > 0) {
+        const hours = parseInt(timeMatch[1])
+        const minutes = parseInt(timeMatch[2])
+        const seconds = parseFloat(timeMatch[3])
+        const currentTime = hours * 3600 + minutes * 60 + seconds
+        const progress = Math.min((currentTime / duration) * 100, 100)
+        
+        // Send progress to renderer
+        event.sender.send('export:progress', progress)
+      }
+    })
+
+    ffmpegProcess.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`FFmpeg export failed: ${errorOutput}`))
+        return
+      }
+
+      // Send 100% progress
+      event.sender.send('export:progress', 100)
+      resolve({ success: true, outputPath })
+    })
+
+    ffmpegProcess.on('error', (error) => {
+      reject(new Error(`FFmpeg process error: ${error.message}`))
+    })
+  })
+})
+
