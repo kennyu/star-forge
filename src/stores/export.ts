@@ -12,6 +12,8 @@ export const useExportStore = defineStore('export', () => {
   const exportProgress = ref(0)
   const exportError = ref<string | null>(null)
   const lastExportPath = ref<string | null>(null)
+  const exportJobName = ref<string>('')
+  const isBackgroundExport = ref(false)
 
   const settings = ref<ExportSettings>({
     quality: '1080p',
@@ -19,10 +21,13 @@ export const useExportStore = defineStore('export', () => {
     format: 'mp4',
   })
 
-  function startExport() {
+  function startExport(jobName: string = 'Export', background: boolean = false) {
     isExporting.value = true
     exportProgress.value = 0
     exportError.value = null
+    exportJobName.value = jobName
+    isBackgroundExport.value = background
+    lastExportPath.value = null
   }
 
   function updateProgress(progress: number) {
@@ -31,19 +36,30 @@ export const useExportStore = defineStore('export', () => {
 
   function completeExport(outputPath: string) {
     isExporting.value = false
-    exportProgress.value = 100
     lastExportPath.value = outputPath
+    exportProgress.value = 100
   }
 
   function failExport(error: string) {
     isExporting.value = false
     exportError.value = error
+    isBackgroundExport.value = false
   }
 
   function resetExport() {
     isExporting.value = false
     exportProgress.value = 0
     exportError.value = null
+    lastExportPath.value = null
+    exportJobName.value = ''
+    isBackgroundExport.value = false
+  }
+
+  function cancelExport() {
+    isExporting.value = false
+    exportProgress.value = 0
+    exportError.value = 'Export cancelled by user'
+    isBackgroundExport.value = false
   }
 
   function updateSettings(newSettings: Partial<ExportSettings>) {
@@ -55,12 +71,15 @@ export const useExportStore = defineStore('export', () => {
     exportProgress,
     exportError,
     lastExportPath,
+    exportJobName,
+    isBackgroundExport,
     settings,
     startExport,
     updateProgress,
     completeExport,
     failExport,
     resetExport,
+    cancelExport,
     updateSettings,
   }
 })

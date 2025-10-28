@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { useClipStore } from '@/stores/clips'
 import { useExportStore } from '@/stores/export'
+import { useTimelineStore } from '@/stores/timeline'
 
 const props = defineProps<{
   open: boolean
@@ -16,6 +17,7 @@ const emit = defineEmits<{
 
 const clipStore = useClipStore()
 const exportStore = useExportStore()
+const timelineStore = useTimelineStore()
 
 const selectedQuality = ref<'720p' | '1080p' | 'source'>('1080p')
 const isExporting = computed(() => exportStore.isExporting)
@@ -23,36 +25,23 @@ const exportProgress = computed(() => exportStore.exportProgress)
 const exportError = computed(() => exportStore.exportError)
 const lastExportPath = computed(() => exportStore.lastExportPath)
 
+// Detect export mode: timeline vs single clip
+const isTimelineExport = computed(() => timelineStore.clips.length > 0)
+
 const selectedClip = computed(() => {
   if (!clipStore.selectedClipId) return null
   return clipStore.getClipById(clipStore.selectedClipId)
 })
 
-const handleExport = async () => {
-  if (!selectedClip.value) return
-
-  const { ipcRenderer } = window.require('electron')
-  
-  // Show save dialog
-  const outputPath = await ipcRenderer.invoke('dialog:saveFile', 'export.mp4')
-  if (!outputPath) return // User cancelled
-
-  exportStore.startExport()
-
-  try {
-    // Call FFmpeg export with progress tracking
-    await ipcRenderer.invoke('ffmpeg:export', {
-      inputPath: selectedClip.value.path,
-      outputPath: outputPath,
-      quality: selectedQuality.value,
-      duration: selectedClip.value.duration
-    })
-
-    exportStore.completeExport(outputPath)
-  } catch (error: any) {
-    exportStore.failExport(error.message || 'Export failed')
+const timelineInfo = computed(() => {
+  if (!isTimelineExport.value) return null
+  const uniqueFiles = new Set(timelineStore.clips.map(c => c.clipId)).size
+  return {
+    clipCount: timelineStore.clips.length,
+    duration: timelineStore.totalDuration,
+    uniqueFiles
   }
-}
+})
 
 // Listen for progress updates from main process
 const { ipcRenderer } = window.require('electron')
@@ -60,9 +49,127 @@ ipcRenderer.on('export:progress', (_: any, progress: number) => {
   exportStore.updateProgress(progress)
 })
 
+// Handle cancel existing export
+const handleCancelExport = async () => {
+  try {
+    await ipcRenderer.invoke('ffmpeg:cancel')
+    exportStore.cancelExport()
+    emit('update:open', false)
+  } catch (error: any) {
+    console.error('Cancel failed:', error)
+  }
+}
+
+// Handle single clip export
+const handleSingleClipExport = async () => {
+  if (!selectedClip.value) return
+
+  console.log('[Export] Starting single clip export:', {
+    clipName: selectedClip.value.name,
+    clipPath: selectedClip.value.path,
+    duration: selectedClip.value.duration,
+    quality: selectedQuality.value
+  })
+
+  const outputPath = await ipcRenderer.invoke('dialog:saveFile', `${selectedClip.value.name}_export.mp4`)
+  if (!outputPath) {
+    console.log('[Export] User cancelled save dialog')
+    return
+  }
+
+  console.log('[Export] Output path selected:', outputPath)
+
+  exportStore.startExport(`Exporting: ${selectedClip.value.name}`, true)
+  emit('update:open', false) // Close dialog, show progress in header
+
+  try {
+    const result = await ipcRenderer.invoke('ffmpeg:export', {
+      inputPath: selectedClip.value.path,
+      outputPath,
+      quality: selectedQuality.value,
+      duration: selectedClip.value.duration
+    })
+
+    console.log('[Export] Single clip export successful:', result)
+    exportStore.completeExport(outputPath)
+  } catch (error: any) {
+    console.error('[Export] Single clip export failed:', error)
+    exportStore.failExport(error.message || 'Export failed')
+  }
+}
+
+// Handle timeline export
+const handleTimelineExport = async () => {
+  if (timelineStore.clips.length === 0) return
+
+  console.log('[Export] Starting timeline export:', {
+    clipCount: timelineStore.clips.length,
+    totalDuration: timelineStore.totalDuration,
+    quality: selectedQuality.value
+  })
+
+  const outputPath = await ipcRenderer.invoke('dialog:saveFile', 'timeline_export.mp4')
+  if (!outputPath) {
+    console.log('[Export] User cancelled save dialog')
+    return
+  }
+
+  console.log('[Export] Output path selected:', outputPath)
+
+  // Build clip data for FFmpeg
+  const clips = timelineStore.clips.map((tc, index) => {
+    const sourceClip = clipStore.getClipById(tc.clipId)
+    console.log(`[Export] Timeline clip ${index}:`, {
+      name: tc.name,
+      sourceFilePath: sourceClip?.path,
+      trimStart: tc.trimStart,
+      trimEnd: tc.trimEnd,
+      duration: tc.duration
+    })
+    return {
+      sourceFilePath: sourceClip?.path || '',
+      trimStart: tc.trimStart,
+      trimEnd: tc.trimEnd,
+      duration: tc.duration
+    }
+  })
+
+  console.log('[Export] Invoking ffmpeg:exportTimeline with:', {
+    clipCount: clips.length,
+    outputPath,
+    quality: selectedQuality.value,
+    totalDuration: timelineStore.totalDuration
+  })
+
+  exportStore.startExport(`Exporting Timeline (${clips.length} clips)`, true)
+  emit('update:open', false) // Close dialog, show progress in header
+
+  try {
+    const result = await ipcRenderer.invoke('ffmpeg:exportTimeline', {
+      clips,
+      outputPath,
+      quality: selectedQuality.value,
+      totalDuration: timelineStore.totalDuration
+    })
+
+    console.log('[Export] Timeline export successful:', result)
+    exportStore.completeExport(outputPath)
+  } catch (error: any) {
+    console.error('[Export] Timeline export failed:', error)
+    exportStore.failExport(error.message || 'Export failed')
+  }
+}
+
+const handleExport = () => {
+  if (isTimelineExport.value) {
+    handleTimelineExport()
+  } else {
+    handleSingleClipExport()
+  }
+}
+
 const handleClose = () => {
   if (!isExporting.value) {
-    exportStore.resetExport()
     emit('update:open', false)
   }
 }
@@ -70,8 +177,13 @@ const handleClose = () => {
 const openOutputFolder = async () => {
   if (!lastExportPath.value) return
   const { shell } = window.require('electron')
-  const path = window.require('path')
   shell.showItemInFolder(lastExportPath.value)
+}
+
+const formatTime = (seconds: number) => {
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 </script>
 
@@ -79,129 +191,137 @@ const openOutputFolder = async () => {
   <Dialog :open="props.open" @update:open="handleClose">
     <template #default="{ close }">
       <div class="space-y-6">
-        <div>
+        <!-- Cancel Export Dialog -->
+        <div v-if="isExporting">
+          <h2 class="text-2xl font-semibold">Export In Progress</h2>
+          <p class="text-sm text-muted-foreground mt-1">
+            An export job is currently running
+          </p>
+
+          <div class="mt-6 space-y-4">
+            <div class="rounded-lg border p-4 bg-muted/50">
+              <p class="font-medium">{{ exportStore.exportJobName }}</p>
+              <div class="mt-3 space-y-2">
+                <div class="flex justify-between text-sm">
+                  <span>Progress</span>
+                  <span>{{ Math.round(exportProgress) }}%</span>
+                </div>
+                <Progress :model-value="exportProgress" />
+              </div>
+            </div>
+
+            <div class="rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-4">
+              <p class="text-sm text-yellow-600 dark:text-yellow-400">
+                ⚠️ Canceling will stop the export and discard the output file
+              </p>
+            </div>
+          </div>
+
+          <div class="flex gap-3 mt-6">
+            <Button
+              @click="handleClose"
+              variant="outline"
+              class="flex-1"
+            >
+              Keep Running
+            </Button>
+            <Button
+              @click="handleCancelExport"
+              variant="destructive"
+              class="flex-1"
+            >
+              Cancel Export
+            </Button>
+          </div>
+        </div>
+
+        <!-- Normal Export Dialog -->
+        <div v-else>
           <h2 class="text-2xl font-semibold">Export Video</h2>
           <p class="text-sm text-muted-foreground mt-1">
-            Export current clip to MP4
+            {{ isTimelineExport ? 'Export entire timeline to MP4' : 'Export current clip to MP4' }}
           </p>
-        </div>
 
-        <!-- Clip Info -->
-        <div v-if="selectedClip" class="rounded-lg border p-4 bg-muted/50">
-          <p class="font-medium">{{ selectedClip.name }}</p>
-          <p class="text-sm text-muted-foreground">
-            {{ selectedClip.resolution.width }}×{{ selectedClip.resolution.height }} • 
-            {{ Math.round(selectedClip.duration) }}s
-          </p>
-        </div>
-
-        <!-- Quality Selection -->
-        <div v-if="!isExporting && !lastExportPath" class="space-y-3">
-          <label class="text-sm font-medium">Output Quality</label>
-          <div class="flex gap-2">
-            <Button
-              :variant="selectedQuality === '720p' ? 'default' : 'outline'"
-              @click="selectedQuality = '720p'"
-              class="flex-1"
-            >
-              720p
-            </Button>
-            <Button
-              :variant="selectedQuality === '1080p' ? 'default' : 'outline'"
-              @click="selectedQuality = '1080p'"
-              class="flex-1"
-            >
-              1080p
-            </Button>
-            <Button
-              :variant="selectedQuality === 'source' ? 'default' : 'outline'"
-              @click="selectedQuality = 'source'"
-              class="flex-1"
-            >
-              Source
-            </Button>
-          </div>
-          <p class="text-xs text-muted-foreground">
-            Higher quality = larger file size and longer export time
-          </p>
-        </div>
-
-        <!-- Export Progress -->
-        <div v-if="isExporting" class="space-y-3">
-          <div class="space-y-2">
-            <div class="flex justify-between text-sm">
-              <span>Exporting...</span>
-              <span>{{ Math.round(exportProgress) }}%</span>
-            </div>
-            <Progress :model-value="exportProgress" />
-          </div>
-          <p class="text-xs text-muted-foreground">
-            This may take a few moments depending on video length and quality
-          </p>
-        </div>
-
-        <!-- Success State -->
-        <div v-if="lastExportPath && !isExporting" class="space-y-3">
-          <div class="rounded-lg border border-green-500/20 bg-green-500/10 p-4">
+          <!-- Timeline Info -->
+          <div v-if="isTimelineExport && timelineInfo" class="rounded-lg border p-4 bg-muted/50">
             <div class="flex items-start gap-3">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="text-green-500 flex-shrink-0"
-              >
-                <polyline points="20 6 9 17 4 12" />
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="flex-shrink-0">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <path d="M9 8h6"/>
+                <path d="M9 12h6"/>
+                <path d="M9 16h6"/>
               </svg>
               <div>
-                <p class="font-medium text-green-500">Export Successful!</p>
-                <p class="text-sm text-muted-foreground mt-1">
-                  Your video has been exported
+                <p class="font-medium">Timeline Export</p>
+                <p class="text-sm text-muted-foreground">
+                  {{ timelineInfo.clipCount }} clips • {{ formatTime(timelineInfo.duration) }} • {{ timelineInfo.uniqueFiles }} source files
                 </p>
               </div>
             </div>
           </div>
-          <Button @click="openOutputFolder" variant="outline" class="w-full">
-            Open Output Folder
-          </Button>
-        </div>
 
-        <!-- Error State -->
-        <div v-if="exportError" class="rounded-lg border border-red-500/20 bg-red-500/10 p-4">
-          <p class="font-medium text-red-500">Export Failed</p>
-          <p class="text-sm text-muted-foreground mt-1">{{ exportError }}</p>
-        </div>
+          <!-- Single Clip Info -->
+          <div v-else-if="selectedClip" class="rounded-lg border p-4 bg-muted/50">
+            <p class="font-medium">{{ selectedClip.name }}</p>
+            <p class="text-sm text-muted-foreground">
+              {{ selectedClip.resolution.width }}×{{ selectedClip.resolution.height }} • 
+              {{ formatTime(selectedClip.duration) }}
+            </p>
+          </div>
 
-        <!-- Action Buttons -->
-        <div class="flex gap-3 pt-4">
-          <Button
-            v-if="!isExporting && !lastExportPath"
-            @click="handleExport"
-            :disabled="!selectedClip"
-            class="flex-1"
-          >
-            Start Export
-          </Button>
-          <Button
-            v-if="lastExportPath || exportError"
-            @click="handleClose"
-            class="flex-1"
-          >
-            Done
-          </Button>
-          <Button
-            v-if="!isExporting && !lastExportPath"
-            @click="handleClose"
-            variant="outline"
-            class="flex-1"
-          >
-            Cancel
-          </Button>
+          <!-- Quality Selection -->
+          <div class="space-y-3">
+            <label class="text-sm font-medium">Output Quality</label>
+            <div class="flex gap-2">
+              <Button
+                :variant="selectedQuality === '720p' ? 'default' : 'outline'"
+                @click="selectedQuality = '720p'"
+                class="flex-1"
+              >
+                720p
+              </Button>
+              <Button
+                :variant="selectedQuality === '1080p' ? 'default' : 'outline'"
+                @click="selectedQuality = '1080p'"
+                class="flex-1"
+              >
+                1080p
+              </Button>
+              <Button
+                :variant="selectedQuality === 'source' ? 'default' : 'outline'"
+                @click="selectedQuality = 'source'"
+                class="flex-1"
+              >
+                Source
+              </Button>
+            </div>
+            <p class="text-xs text-muted-foreground">
+              Export will run in the background. You can continue editing.
+            </p>
+          </div>
+
+          <!-- Action Buttons -->
+          <div class="flex gap-3 pt-4">
+            <Button
+              @click="handleExport"
+              :disabled="!isTimelineExport && !selectedClip"
+              class="flex-1"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mr-2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" x2="12" y1="15" y2="3"/>
+              </svg>
+              Start Export
+            </Button>
+            <Button
+              @click="handleClose"
+              variant="outline"
+              class="flex-1"
+            >
+              Cancel
+            </Button>
+          </div>
         </div>
       </div>
     </template>
