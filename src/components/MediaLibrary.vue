@@ -27,6 +27,13 @@ const removeClip = (id: string, event: Event) => {
   event.stopPropagation()
   clipStore.removeClip(id)
 }
+
+const handleDragStart = (e: DragEvent, clipId: string) => {
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'copy'
+    e.dataTransfer.setData('clipId', clipId)
+  }
+}
 </script>
 
 <template>
@@ -47,9 +54,11 @@ const removeClip = (id: string, event: Event) => {
       <div
         v-for="clip in clips"
         :key="clip.id"
+        draggable="true"
+        @dragstart="handleDragStart($event, clip.id)"
         @click="selectClip(clip.id)"
         :class="[
-          'rounded-lg border p-4 cursor-pointer transition-colors',
+          'rounded-lg border p-4 cursor-move transition-colors',
           selectedClipId === clip.id
             ? 'border-primary bg-primary/5'
             : 'hover:border-primary/50'
