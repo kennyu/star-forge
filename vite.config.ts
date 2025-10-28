@@ -12,6 +12,20 @@ export default defineConfig({
       {
         // Main process entry point
         entry: 'electron/main.ts',
+        vite: {
+          build: {
+            rollupOptions: {
+              external: [
+                // Don't bundle these - they need to be available at runtime
+                '@ffmpeg-installer/ffmpeg',
+                'ffprobe-static',
+                'fs',
+                'path',
+                'child_process',
+              ],
+            },
+          },
+        },
       },
     ]),
     renderer(),

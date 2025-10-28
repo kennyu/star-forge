@@ -1,5 +1,9 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import path from 'path'
+import { spawn } from 'child_process'
+import ffmpeg from '@ffmpeg-installer/ffmpeg'
+import ffprobeStatic from 'ffprobe-static'
+import fs from 'fs'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -63,5 +67,58 @@ ipcMain.handle('dialog:saveFile', async (_, defaultPath: string) => {
     ]
   })
   return result.filePath
+})
+
+// Get video metadata using FFprobe
+ipcMain.handle('ffmpeg:getMetadata', async (_, filePath: string) => {
+  return new Promise((resolve, reject) => {
+    const ffprobe = spawn(ffprobeStatic.path, [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height,duration',
+      '-show_entries', 'format=duration,size',
+      '-of', 'json',
+      filePath
+    ])
+
+    let output = ''
+    let errorOutput = ''
+
+    ffprobe.stdout.on('data', (data) => {
+      output += data.toString()
+    })
+
+    ffprobe.stderr.on('data', (data) => {
+      errorOutput += data.toString()
+    })
+
+    ffprobe.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`FFprobe failed: ${errorOutput}`))
+        return
+      }
+
+      try {
+        const data = JSON.parse(output)
+        const stats = fs.statSync(filePath)
+        const fileName = path.basename(filePath)
+        
+        const metadata = {
+          name: fileName,
+          duration: parseFloat(data.format?.duration || data.streams?.[0]?.duration || 0),
+          resolution: {
+            width: data.streams?.[0]?.width || 0,
+            height: data.streams?.[0]?.height || 0
+          },
+          size: parseInt(data.format?.size || stats.size),
+          type: path.extname(filePath).slice(1).toUpperCase()
+        }
+
+        resolve(metadata)
+      } catch (error) {
+        reject(error)
+      }
+    })
+  })
 })
 

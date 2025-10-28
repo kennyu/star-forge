@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "Desktop video editor built with Electron + Vue + FFmpeg",
   "main": "dist-electron/main.js",
-  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build && electron-builder",
@@ -16,6 +15,7 @@
     "@ffmpeg/ffmpeg": "^0.12.10",
     "@ffmpeg/util": "^0.12.1",
     "electron": "^32.0.0",
+    "ffprobe-static": "^3.1.0",
     "pinia": "^2.1.0",
     "vue": "^3.4.0"
   },

@@ -1,8 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed } from 'vue'
 import { Button } from '@/components/ui/button'
+import FileImport from '@/components/FileImport.vue'
+import MediaLibrary from '@/components/MediaLibrary.vue'
+import { useClipStore } from '@/stores/clips'
 
-const appReady = ref(true)
+const clipStore = useClipStore()
+const hasClips = computed(() => clipStore.importedClips.length > 0)
 </script>
 
 <template>
@@ -12,23 +16,30 @@ const appReady = ref(true)
       <div class="container flex h-16 items-center px-4">
         <h1 class="text-2xl font-bold">ClipForge</h1>
         <div class="ml-auto flex items-center space-x-4">
-          <Button variant="outline">Import</Button>
-          <Button>Export</Button>
+          <Button variant="outline" disabled>Preview</Button>
+          <Button disabled>Export</Button>
         </div>
       </div>
     </header>
 
     <!-- Main Content -->
     <main class="container mx-auto p-6">
-      <div class="rounded-lg border bg-card p-8 text-center">
-        <h2 class="text-3xl font-semibold mb-4">Welcome to ClipForge</h2>
-        <p class="text-muted-foreground mb-6">
-          Desktop video editor built with Electron + Vue + FFmpeg
-        </p>
-        <div class="flex justify-center gap-4">
-          <Button size="lg">Get Started</Button>
-          <Button size="lg" variant="outline">Learn More</Button>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Left Column: File Import -->
+        <div>
+          <FileImport />
         </div>
+
+        <!-- Right Column: Media Library -->
+        <div>
+          <MediaLibrary />
+        </div>
+      </div>
+
+      <!-- Placeholder for future preview/timeline -->
+      <div v-if="hasClips" class="mt-6 rounded-lg border bg-card p-8 text-center">
+        <p class="text-muted-foreground">Preview and Timeline will appear here</p>
+        <p class="text-sm text-muted-foreground mt-1">Coming in Layer 2B & 2C</p>
       </div>
     </main>
   </div>
