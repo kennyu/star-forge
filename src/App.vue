@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { Button } from '@/components/ui/button'
 import FileImport from '@/components/FileImport.vue'
 import MediaLibrary from '@/components/MediaLibrary.vue'
+import VideoPlayer from '@/components/VideoPlayer.vue'
 import { useClipStore } from '@/stores/clips'
 
 const clipStore = useClipStore()
@@ -36,10 +37,15 @@ const hasClips = computed(() => clipStore.importedClips.length > 0)
         </div>
       </div>
 
-      <!-- Placeholder for future preview/timeline -->
+      <!-- Video Preview -->
+      <div v-if="hasClips" class="mt-6">
+        <VideoPlayer />
+      </div>
+
+      <!-- Placeholder for timeline -->
       <div v-if="hasClips" class="mt-6 rounded-lg border bg-card p-8 text-center">
-        <p class="text-muted-foreground">Preview and Timeline will appear here</p>
-        <p class="text-sm text-muted-foreground mt-1">Coming in Layer 2B & 2C</p>
+        <p class="text-muted-foreground">Timeline will appear here</p>
+        <p class="text-sm text-muted-foreground mt-1">Coming in Layer 3</p>
       </div>
     </main>
   </div>
