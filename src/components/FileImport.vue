@@ -33,7 +33,9 @@ const handleDrop = async (e: DragEvent) => {
   
   const files = e.dataTransfer?.files
   if (files && files.length > 0) {
-    const filePaths = Array.from(files).map(f => f.path)
+    // Use webUtils to get proper file paths
+    const { webUtils } = window.require('electron')
+    const filePaths = Array.from(files).map(f => webUtils.getPathForFile(f))
     await processFiles(filePaths)
   }
 }
