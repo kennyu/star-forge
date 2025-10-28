@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { useTimelineStore } from './timeline'
 
 export interface Clip {
   id: string
@@ -30,6 +31,24 @@ export const useClipStore = defineStore('clips', () => {
     }
     if (selectedClipId.value === id) {
       selectedClipId.value = null
+    }
+
+    // Remove all instances of this clip from timeline
+    const timelineStore = useTimelineStore()
+    
+    // Find all timeline clips that reference this media clip
+    const timelineClipIds = timelineStore.clips
+      .filter(clip => clip.clipId === id)
+      .map(clip => clip.id)
+    
+    // Remove each timeline clip
+    for (const timelineClipId of timelineClipIds) {
+      timelineStore.removeClipFromTimeline(timelineClipId)
+    }
+    
+    // Auto-arrange remaining clips if any were removed
+    if (timelineClipIds.length > 0) {
+      timelineStore.reorderClips()
     }
   }
 

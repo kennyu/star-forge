@@ -4,11 +4,13 @@ import { ref, computed } from 'vue'
 export interface TimelineClip {
   id: string
   clipId: string // Reference to clip in ClipStore
+  name: string // Clip name for display
   startTime: number // Position on timeline in seconds
   duration: number
   trimStart: number // Where to start playing from (in seconds)
   trimEnd: number // Where to stop playing (in seconds)
   track: number // For multi-track support later
+  thumbnail: string // Data URL of thumbnail image
 }
 
 export const useTimelineStore = defineStore('timeline', () => {
@@ -16,6 +18,7 @@ export const useTimelineStore = defineStore('timeline', () => {
   const playheadTime = ref(0)
   const zoom = ref(1)
   const isPlaying = ref(false)
+  const selectedTimelineClipId = ref<string | null>(null)
 
   const totalDuration = computed(() => {
     if (clips.value.length === 0) return 0
@@ -49,6 +52,20 @@ export const useTimelineStore = defineStore('timeline', () => {
     clips.value.sort((a, b) => a.startTime - b.startTime)
   }
 
+  function moveClip(clipId: string, newStartTime: number) {
+    const clip = clips.value.find(c => c.id === clipId)
+    if (clip) {
+      clip.startTime = Math.max(0, newStartTime)
+      sortClipsByStartTime()
+    }
+  }
+
+  function getClipAtTime(time: number): TimelineClip | null {
+    return clips.value.find(clip => 
+      time >= clip.startTime && time < clip.startTime + clip.duration
+    ) || null
+  }
+
   function setPlayhead(time: number) {
     playheadTime.value = Math.max(0, Math.min(time, totalDuration.value))
   }
@@ -68,6 +85,21 @@ export const useTimelineStore = defineStore('timeline', () => {
   function clearTimeline() {
     clips.value = []
     playheadTime.value = 0
+    selectedTimelineClipId.value = null
+  }
+
+  function selectTimelineClip(clipId: string | null) {
+    selectedTimelineClipId.value = clipId
+  }
+
+  function reorderClips() {
+    // Rearrange clips to be sequential with no gaps
+    let currentTime = 0
+    sortClipsByStartTime()
+    clips.value.forEach(clip => {
+      clip.startTime = currentTime
+      currentTime += clip.duration
+    })
   }
 
   return {
@@ -75,15 +107,20 @@ export const useTimelineStore = defineStore('timeline', () => {
     playheadTime,
     zoom,
     isPlaying,
+    selectedTimelineClipId,
     totalDuration,
     addClipToTimeline,
     removeClipFromTimeline,
     updateClip,
+    moveClip,
+    getClipAtTime,
     setPlayhead,
     setZoom,
     play,
     pause,
     clearTimeline,
+    selectTimelineClip,
+    reorderClips,
   }
 })
 
