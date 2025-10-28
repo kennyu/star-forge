@@ -241,19 +241,37 @@ const getClipStyle = (clip: TimelineClip) => {
   }
 }
 
-// Playhead is now fixed in center - calculate time at playhead based on scroll
-const playheadTime = computed(() => {
-  if (!timelineContainerRef.value) return 0
+// SIMPLIFIED: Always sync scroll position to store playhead time
+watch(() => timelineStore.playheadTime, (newTime) => {
+  if (!timelineContainerRef.value) return
+  
+  console.log('[Timeline] Store playhead changed to:', newTime.toFixed(2))
+  
+  // Calculate scroll position to center the playhead at this time
   const containerWidth = timelineContainerRef.value.clientWidth
-  // Subtract padding to get actual content position
-  const centerPosition = timelineScrollLeft.value + (containerWidth / 2) - timelinePadding.value
-  return Math.max(0, centerPosition / pixelsPerSecond.value)
+  const timePosition = newTime * pixelsPerSecond.value
+  const newScrollLeft = Math.max(0, timePosition + timelinePadding.value - (containerWidth / 2))
+  
+  // Scroll to position (smooth when not playing, instant when playing)
+  timelineContainerRef.value.scrollTo({
+    left: newScrollLeft,
+    behavior: timelineStore.isPlaying ? 'auto' : 'smooth'
+  })
+  
+  timelineScrollLeft.value = newScrollLeft
 })
 
-// Update store playhead time when scroll changes
-watch(playheadTime, (newTime) => {
+// Update store playhead time when user manually scrolls (only when NOT playing)
+const updatePlayheadFromScroll = () => {
+  if (timelineStore.isPlaying || !timelineContainerRef.value) return
+  
+  const containerWidth = timelineContainerRef.value.clientWidth
+  const centerPosition = timelineScrollLeft.value + (containerWidth / 2) - timelinePadding.value
+  const newTime = Math.max(0, centerPosition / pixelsPerSecond.value)
+  
+  console.log('[Timeline] User scrolled, updating playhead to:', newTime.toFixed(2))
   timelineStore.setPlayhead(newTime)
-})
+}
 
 // Drag to scroll timeline
 const timelineDragDistance = ref(0)
@@ -289,6 +307,8 @@ const handleTimelineDragMove = (e: MouseEvent) => {
 
 const handleTimelineDragEnd = () => {
   isDraggingTimeline.value = false
+  // Update playhead from final scroll position
+  updatePlayheadFromScroll()
 }
 
 // Track scroll position
@@ -316,27 +336,42 @@ const handleTimeRulerClick = (e: MouseEvent) => {
   if (!timelineContainerRef.value) return
   
   const rect = timelineContainerRef.value.getBoundingClientRect()
-  const containerWidth = timelineContainerRef.value.clientWidth
   
-  // Calculate absolute position in timeline (accounting for padding)
+  // Calculate absolute position in timeline (accounting for padding and scroll)
   const clickX = e.clientX - rect.left + timelineScrollLeft.value - timelinePadding.value
   
-  // Calculate scroll position to center the clicked time
-  const newScrollLeft = Math.max(0, clickX - (containerWidth / 2) + timelinePadding.value)
+  // Convert to time
+  const newTime = Math.max(0, clickX / pixelsPerSecond.value)
   
-  // Smooth scroll to position
-  timelineContainerRef.value.scrollTo({
-    left: newScrollLeft,
-    behavior: 'smooth'
-  })
+  console.log('[Timeline] Time ruler clicked at:', newTime.toFixed(2))
   
-  timelineScrollLeft.value = newScrollLeft
+  // SIMPLIFIED: Just update the store playhead - scroll will follow automatically
+  timelineStore.setPlayhead(newTime)
+  
   timelineDragDistance.value = 0
+}
+
+// Toggle timeline playback
+const toggleTimelinePlayback = () => {
+  console.log('[Timeline] toggleTimelinePlayback called')
+  console.log('[Timeline] Current isPlaying:', timelineStore.isPlaying)
+  console.log('[Timeline] Current playheadTime:', timelineStore.playheadTime)
+  console.log('[Timeline] Timeline clips:', timelineStore.clips.length)
+  
+  if (timelineStore.isPlaying) {
+    console.log('[Timeline] Calling pause()')
+    timelineStore.pause()
+  } else {
+    console.log('[Timeline] Calling play()')
+    timelineStore.play()
+  }
+  
+  console.log('[Timeline] After toggle, isPlaying:', timelineStore.isPlaying)
 }
 
 // Split clip at playhead
 const splitClipAtPlayhead = async () => {
-  const currentTime = playheadTime.value
+  const currentTime = timelineStore.playheadTime
   
   // Find clip that contains the playhead
   const clipToSplit = timelineStore.clips.find(clip =>
@@ -408,6 +443,39 @@ const splitClipAtPlayhead = async () => {
     <div class="flex justify-between items-center">
       <h2 class="text-xl font-semibold">Timeline</h2>
       <div class="flex items-center gap-4">
+        <!-- Play/Pause Button -->
+        <Button 
+          @click="toggleTimelinePlayback"
+          variant="default"
+          size="sm"
+          :disabled="timelineStore.clips.length === 0"
+        >
+          <svg
+            v-if="!timelineStore.isPlaying"
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            class="mr-2"
+          >
+            <polygon points="5 3 19 12 5 21 5 3" />
+          </svg>
+          <svg
+            v-else
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            class="mr-2"
+          >
+            <rect x="6" y="4" width="4" height="16" />
+            <rect x="14" y="4" width="4" height="16" />
+          </svg>
+          {{ timelineStore.isPlaying ? 'Pause' : 'Play' }}
+        </Button>
+
         <Button 
           @click="splitClipAtPlayhead"
           variant="outline"
@@ -482,10 +550,20 @@ const splitClipAtPlayhead = async () => {
         class="relative"
       >
         <!-- Fixed Playhead Indicator -->
-        <div class="absolute top-0 bottom-0 left-1/2 w-0.5 bg-red-500 z-50 pointer-events-none" style="transform: translateX(-50%);">
-          <div class="absolute -top-1 -left-1.5 w-3 h-3 bg-red-500 rounded-full"></div>
-          <div class="absolute top-8 left-1/2 -translate-x-1/2 bg-red-500 text-white text-xs px-2 py-1 rounded whitespace-nowrap pointer-events-auto">
-            {{ formatTime(playheadTime) }}
+        <div 
+          class="absolute top-0 bottom-0 left-1/2 w-0.5 z-50 pointer-events-none transition-colors"
+          :class="timelineStore.isPlaying ? 'bg-green-500' : 'bg-red-500'"
+          style="transform: translateX(-50%);"
+        >
+          <div 
+            class="absolute -top-1 -left-1.5 w-3 h-3 rounded-full transition-colors"
+            :class="timelineStore.isPlaying ? 'bg-green-500' : 'bg-red-500'"
+          ></div>
+          <div 
+            class="absolute top-8 left-1/2 -translate-x-1/2 text-white text-xs px-2 py-1 rounded whitespace-nowrap pointer-events-auto transition-colors"
+            :class="timelineStore.isPlaying ? 'bg-green-500' : 'bg-red-500'"
+          >
+            {{ formatTime(timelineStore.playheadTime) }}
           </div>
         </div>
 

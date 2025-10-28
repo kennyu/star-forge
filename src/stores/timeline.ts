@@ -19,6 +19,10 @@ export const useTimelineStore = defineStore('timeline', () => {
   const zoom = ref(1)
   const isPlaying = ref(false)
   const selectedTimelineClipId = ref<string | null>(null)
+  
+  // Playback state for continuous timeline playback
+  const currentPlaybackClipIndex = ref<number>(-1)
+  const playbackStartTime = ref<number>(0)
 
   const totalDuration = computed(() => {
     if (clips.value.length === 0) return 0
@@ -102,22 +106,52 @@ export const useTimelineStore = defineStore('timeline', () => {
     })
   }
 
+  // Find clip index at a specific timeline time
+  function getClipIndexAtTime(time: number): number {
+    return clips.value.findIndex(clip => 
+      time >= clip.startTime && time < clip.startTime + clip.duration
+    )
+  }
+
+  // Set current playback clip
+  function setPlaybackClip(index: number) {
+    currentPlaybackClipIndex.value = index
+  }
+
+  // Start playback from current playhead
+  function startPlayback() {
+    playbackStartTime.value = playheadTime.value
+    isPlaying.value = true
+  }
+
+  // Stop playback
+  function stopPlayback() {
+    isPlaying.value = false
+    currentPlaybackClipIndex.value = -1
+  }
+
   return {
     clips,
     playheadTime,
     zoom,
     isPlaying,
     selectedTimelineClipId,
+    currentPlaybackClipIndex,
+    playbackStartTime,
     totalDuration,
     addClipToTimeline,
     removeClipFromTimeline,
     updateClip,
     moveClip,
     getClipAtTime,
+    getClipIndexAtTime,
     setPlayhead,
     setZoom,
     play,
     pause,
+    startPlayback,
+    stopPlayback,
+    setPlaybackClip,
     clearTimeline,
     selectTimelineClip,
     reorderClips,
