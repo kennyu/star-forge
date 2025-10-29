@@ -123,6 +123,13 @@ const handleDrop = async (e: DragEvent) => {
   if (!clip) return
 
   try {
+    // Validate clip duration
+    if (!clip.duration || clip.duration <= 0 || !isFinite(clip.duration)) {
+      console.error('[Timeline] Cannot add clip with invalid duration:', clip.duration)
+      alert('Cannot add this clip to timeline: Invalid or missing duration. Please ensure the video file has valid metadata.')
+      return
+    }
+
     // Generate thumbnail
     const thumbnail = await generateThumbnail(clip.path)
 
@@ -588,7 +595,7 @@ const splitClipAtPlayhead = async () => {
             <div class="relative" :style="{ width: `${timelineWidth}px`, height: '100%' }">
               <!-- Time markers every 5 seconds -->
               <div
-                v-for="i in Math.ceil(timelineStore.totalDuration / 5)"
+                v-for="i in Math.max(0, Math.min(1000, Math.ceil(timelineStore.totalDuration / 5)))"
                 :key="i"
                 :style="{ left: `${i * 5 * pixelsPerSecond}px` }"
                 class="absolute top-0 bottom-0 border-l border-border"
