@@ -40,6 +40,53 @@ const handleDrop = async (e: DragEvent) => {
   }
 }
 
+// Get duration from HTML5 video element (fast fallback for files without duration metadata)
+const getVideoDuration = (filePath: string): Promise<number> => {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video')
+    video.preload = 'metadata'
+    
+    let hasResponded = false
+    
+    const cleanup = () => {
+      if (!hasResponded) {
+        hasResponded = true
+        video.onloadedmetadata = null
+        video.onerror = null
+        video.src = ''
+      }
+    }
+    
+    const timeout = setTimeout(() => {
+      if (!hasResponded) {
+        cleanup()
+        reject(new Error('Video duration extraction timeout'))
+      }
+    }, 5000) // 5 second timeout
+    
+    video.onloadedmetadata = () => {
+      if (!hasResponded) {
+        clearTimeout(timeout)
+        const duration = video.duration
+        cleanup()
+        resolve(duration)
+      }
+    }
+    
+    video.onerror = () => {
+      if (!hasResponded) {
+        clearTimeout(timeout)
+        console.warn('[FileImport] Video element could not load file (this is normal for some formats)')
+        cleanup()
+        reject(new Error('Failed to load video metadata'))
+      }
+    }
+    
+    // Use file:// protocol for local files
+    video.src = `file://${filePath}`
+  })
+}
+
 // Process imported files
 const processFiles = async (filePaths: string[]) => {
   isProcessing.value = true
@@ -47,23 +94,39 @@ const processFiles = async (filePaths: string[]) => {
   
   try {
     for (const filePath of filePaths) {
-      // Get metadata from FFmpeg
+      // Get metadata from FFprobe
       const metadata = await ipcRenderer.invoke('ffmpeg:getMetadata', filePath)
       
       if (metadata) {
-        clipStore.addClip({
+        let duration = metadata.duration
+        
+        // If duration is 0 or invalid, try HTML5 video element (fast fallback)
+        if (!duration || duration === 0 || isNaN(duration)) {
+          try {
+            duration = await getVideoDuration(filePath)
+          } catch (videoError) {
+            console.warn('[FileImport] Could not extract duration. File will show 0:00. This is a known issue with some WebM recordings.')
+            // Keep duration as 0 if all methods fail
+            duration = 0
+          }
+        }
+        
+        const clip = {
           id: `clip-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           name: metadata.name,
           path: filePath,
-          duration: metadata.duration,
+          duration: duration,
           resolution: metadata.resolution,
           size: metadata.size,
           type: metadata.type,
-        })
+        }
+        clipStore.addClip(clip)
+      } else {
+        console.warn('[FileImport] No metadata returned for:', filePath)
       }
     }
   } catch (error) {
-    console.error('Error processing files:', error)
+    console.error('[FileImport] Error processing files:', error)
   } finally {
     isProcessing.value = false
   }
