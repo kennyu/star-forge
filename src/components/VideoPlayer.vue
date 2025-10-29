@@ -46,15 +46,32 @@ const shouldShowPlayer = computed(() => {
 function initializePlayer() {
   if (!videoRef.value || player.value) return
   
-  console.log('[VideoPlayer] Initializing player')
+  console.log('[VideoPlayer] Initializing player with performance optimizations')
+  
+  // Enable hardware acceleration attributes on video element
+  videoRef.value.setAttribute('playsinline', '')
+  videoRef.value.setAttribute('webkit-playsinline', '')
   
   player.value = videojs(videoRef.value, {
     controls: false,
     fluid: false,
     responsive: false,
-    preload: 'metadata',
+    preload: 'auto', // Changed from 'metadata' for smoother buffering
     playbackRates: [0.25, 0.5, 1, 1.5, 2],
+    // Hardware acceleration and performance optimizations
+    techOrder: ['html5'], // Use HTML5 tech with hardware acceleration
+    html5: {
+      nativeVideoTracks: false,
+      nativeAudioTracks: false,
+      nativeTextTracks: false,
+      hls: {
+        overrideNative: true,
+        enableLowInitialPlaylist: true,
+      },
+    },
   })
+  
+  console.log('[VideoPlayer] Hardware acceleration enabled')
 
   // Listen to player events and report to playback store
   player.value.on('timeupdate', () => {
@@ -147,6 +164,21 @@ watch(() => playbackStore.currentClipIndex, async (newIndex, oldIndex) => {
 })
 
 /**
+ * Get MIME type from file path
+ */
+function getMimeType(filePath: string): string {
+  const ext = filePath.toLowerCase().split('.').pop()
+  const mimeTypes: Record<string, string> = {
+    'mp4': 'video/mp4',
+    'webm': 'video/webm',
+    'mov': 'video/quicktime',
+    'avi': 'video/x-msvideo',
+    'mkv': 'video/x-matroska',
+  }
+  return mimeTypes[ext || ''] || 'video/mp4' // Default to mp4 if unknown
+}
+
+/**
  * Load and play the current clip from playback store
  */
 async function loadAndPlayCurrentClip() {
@@ -160,10 +192,11 @@ async function loadAndPlayCurrentClip() {
     return
   }
   
-  console.log('[VideoPlayer] Loading:', source, 'start at:', startTime)
+  const mimeType = getMimeType(source)
+  console.log('[VideoPlayer] Loading:', source, 'type:', mimeType, 'start at:', startTime)
   
-  // Load the video source
-  player.value.src({ src: `file://${source}`, type: 'video/mp4' })
+  // Load the video source with correct MIME type
+  player.value.src({ src: `file://${source}`, type: mimeType })
   
   // Wait for video to be ready, then seek and play
   await new Promise<void>((resolve) => {
@@ -209,8 +242,9 @@ watch(() => playbackStore.currentTime, (newTime) => {
   const newSrc = `file://${sourceClip.path}`
   
   if (!currentSrc.includes(sourceClip.path)) {
-    console.log('[VideoPlayer] Loading preview:', sourceClip.name)
-    player.value.src({ src: newSrc, type: 'video/mp4' })
+    const mimeType = getMimeType(sourceClip.path)
+    console.log('[VideoPlayer] Loading preview:', sourceClip.name, 'type:', mimeType)
+    player.value.src({ src: newSrc, type: mimeType })
     player.value.load()
   }
   
@@ -314,6 +348,14 @@ onBeforeUnmount(() => {
         v-if="shouldShowPlayer"
         ref="videoRef"
         class="video-js vjs-big-play-centered w-full h-full"
+        playsinline
+        webkit-playsinline
+        style="
+          image-rendering: auto;
+          transform: translateZ(0);
+          will-change: transform;
+          backface-visibility: hidden;
+        "
       ></video>
     </div>
 

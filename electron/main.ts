@@ -1,12 +1,31 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, desktopCapturer } from 'electron'
 import path from 'path'
 import { spawn, ChildProcess } from 'child_process'
 import ffmpeg from '@ffmpeg-installer/ffmpeg'
 import ffprobeStatic from 'ffprobe-static'
 import fs from 'fs'
+import { promisify } from 'util'
+
+const writeFileAsync = promisify(fs.writeFile)
 
 let mainWindow: BrowserWindow | null = null
 let currentFFmpegProcess: ChildProcess | null = null
+
+// Helper function to get correct binary path for production builds
+function getBinaryPath(originalPath: string): string {
+  // In development, use the original path
+  if (process.env.VITE_DEV_SERVER_URL) {
+    return originalPath
+  }
+  
+  // In production, binaries are unpacked from ASAR
+  // Replace app.asar with app.asar.unpacked
+  if (originalPath.includes('app.asar')) {
+    return originalPath.replace('app.asar', 'app.asar.unpacked')
+  }
+  
+  return originalPath
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -73,11 +92,14 @@ ipcMain.handle('dialog:saveFile', async (_, defaultPath: string) => {
 // Get video metadata using FFprobe
 ipcMain.handle('ffmpeg:getMetadata', async (_, filePath: string) => {
   return new Promise((resolve, reject) => {
-    const ffprobe = spawn(ffprobeStatic.path, [
+    const ffprobePath = getBinaryPath(ffprobeStatic.path)
+    console.log('[FFprobe] Analyzing file:', filePath)
+    console.log('[FFprobe] Using binary at:', ffprobePath)
+    
+    const ffprobe = spawn(ffprobePath, [
       '-v', 'error',
-      '-select_streams', 'v:0',
-      '-show_entries', 'stream=width,height,duration',
-      '-show_entries', 'format=duration,size',
+      '-show_entries', 'stream=width,height,duration,r_frame_rate,nb_frames',
+      '-show_entries', 'format=duration,size,bit_rate',
       '-of', 'json',
       filePath
     ])
@@ -95,18 +117,51 @@ ipcMain.handle('ffmpeg:getMetadata', async (_, filePath: string) => {
 
     ffprobe.on('close', (code) => {
       if (code !== 0) {
+        console.error('[FFprobe] Failed with code:', code, 'Error:', errorOutput)
         reject(new Error(`FFprobe failed: ${errorOutput}`))
         return
       }
 
       try {
+        console.log('[FFprobe] Raw output:', output)
         const data = JSON.parse(output)
+        console.log('[FFprobe] Parsed data:', JSON.stringify(data, null, 2))
+        
         const stats = fs.statSync(filePath)
         const fileName = path.basename(filePath)
         
+        // Extract duration
+        const formatDuration = data.format?.duration
+        const streamDuration = data.streams?.[0]?.duration
+        console.log('[FFprobe] Duration sources - format:', formatDuration, 'stream:', streamDuration)
+        
+        let duration = parseFloat(formatDuration || streamDuration || 0)
+        
+        // Quick fallback: Calculate from frame count and frame rate if available
+        if ((duration === 0 || isNaN(duration)) && data.streams?.[0]?.nb_frames && data.streams?.[0]?.r_frame_rate) {
+          console.log('[FFprobe] Duration is 0/NaN, trying frame count calculation...')
+          const nbFrames = parseInt(data.streams[0].nb_frames)
+          const frameRate = data.streams[0].r_frame_rate
+          
+          // Parse frame rate (e.g., "30/1" or "30000/1001")
+          const [num, den] = frameRate.split('/').map(Number)
+          if (num && den && nbFrames > 0) {
+            const fps = num / den
+            duration = nbFrames / fps
+            console.log('[FFprobe] Calculated duration from frames:', nbFrames, 'frames at', fps.toFixed(2), 'fps =', duration.toFixed(2), 'seconds')
+          }
+        }
+        
+        // If still 0, the renderer will use HTML5 video element as fallback (faster than counting frames)
+        if (duration === 0 || isNaN(duration)) {
+          console.log('[FFprobe] Duration unavailable in metadata, will use HTML5 video element fallback in renderer')
+        }
+        
+        console.log('[FFprobe] Final duration value:', duration)
+        
         const metadata = {
           name: fileName,
-          duration: parseFloat(data.format?.duration || data.streams?.[0]?.duration || 0),
+          duration: duration,
           resolution: {
             width: data.streams?.[0]?.width || 0,
             height: data.streams?.[0]?.height || 0
@@ -115,8 +170,10 @@ ipcMain.handle('ffmpeg:getMetadata', async (_, filePath: string) => {
           type: path.extname(filePath).slice(1).toUpperCase()
         }
 
+        console.log('[FFprobe] Final metadata:', JSON.stringify(metadata, null, 2))
         resolve(metadata)
       } catch (error) {
+        console.error('[FFprobe] Error parsing metadata:', error)
         reject(error)
       }
     })
@@ -171,9 +228,10 @@ ipcMain.handle('ffmpeg:export', async (event, options: {
 
     args.push('-y', outputPath) // Overwrite output file
 
-    console.log('[FFmpeg Export] Command:', ffmpeg.path, args.join(' '))
+    const ffmpegPath = getBinaryPath(ffmpeg.path)
+    console.log('[FFmpeg Export] Command:', ffmpegPath, args.join(' '))
 
-    const ffmpegProcess = spawn(ffmpeg.path, args)
+    const ffmpegProcess = spawn(ffmpegPath, args)
     currentFFmpegProcess = ffmpegProcess
 
     let errorOutput = ''
@@ -333,11 +391,12 @@ ipcMain.handle('ffmpeg:exportTimeline', async (event, options: {
     
     args.push('-y', outputPath)
     
-    console.log('[FFmpeg Timeline] Command:', ffmpeg.path)
+    const ffmpegPath = getBinaryPath(ffmpeg.path)
+    console.log('[FFmpeg Timeline] Command:', ffmpegPath)
     console.log('[FFmpeg Timeline] Args:', args.join(' '))
     console.log('[FFmpeg Timeline] Filter complex:', filterComplex)
     
-    const ffmpegProcess = spawn(ffmpeg.path, args)
+    const ffmpegProcess = spawn(ffmpegPath, args)
     currentFFmpegProcess = ffmpegProcess
     
     let errorOutput = ''
@@ -386,5 +445,133 @@ ipcMain.handle('ffmpeg:exportTimeline', async (event, options: {
       reject(new Error(`FFmpeg process error: ${error.message}`))
     })
   })
+})
+
+// Recording IPC Handlers
+
+// Get available screen and window sources for recording
+ipcMain.handle('recording:getSources', async () => {
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen', 'window'],
+      thumbnailSize: { width: 300, height: 200 }
+    })
+
+    return sources.map(source => ({
+      id: source.id,
+      name: source.name,
+      thumbnail: source.thumbnail.toDataURL()
+    }))
+  } catch (error: any) {
+    console.error('[Recording] Failed to get sources:', error)
+    throw new Error(`Failed to get screen sources: ${error.message}`)
+  }
+})
+
+// Save recording blob to file
+ipcMain.handle('recording:saveRecording', async (_, options: {
+  buffer: Buffer,
+  filename: string
+}) => {
+  try {
+    const { buffer, filename } = options
+    
+    // Get the same directory as exports (user's last save location or documents)
+    const defaultPath = path.join(app.getPath('videos'), filename)
+    
+    const result = await dialog.showSaveDialog({
+      defaultPath,
+      filters: [
+        { name: 'Video (WebM)', extensions: ['webm'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    })
+
+    if (result.canceled || !result.filePath) {
+      return { success: false, canceled: true }
+    }
+
+    const filePath = result.filePath
+    
+    console.log('[Recording] Saving recording to:', filePath)
+    
+    // Write the buffer directly to file
+    await writeFileAsync(filePath, buffer)
+    
+    console.log('[Recording] Recording saved successfully')
+    
+    // Get metadata using ffprobe
+    const metadata = await new Promise((resolve, reject) => {
+      const ffprobePath = getBinaryPath(ffprobeStatic.path)
+      const ffprobe = spawn(ffprobePath, [
+        '-v', 'error',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height,duration',
+        '-show_entries', 'format=duration,size',
+        '-of', 'json',
+        filePath
+      ])
+
+      let output = ''
+      let errorOutput = ''
+
+      ffprobe.stdout.on('data', (data) => {
+        output += data.toString()
+      })
+
+      ffprobe.stderr.on('data', (data) => {
+        errorOutput += data.toString()
+      })
+
+      ffprobe.on('close', (code) => {
+        if (code !== 0) {
+          console.warn('[Recording] FFprobe failed, using fallback metadata')
+          // Return fallback metadata
+          resolve({
+            name: path.basename(filePath),
+            duration: 0,
+            resolution: { width: 1920, height: 1080 },
+            size: buffer.length,
+            type: path.extname(filePath).slice(1).toUpperCase()
+          })
+          return
+        }
+
+        try {
+          const data = JSON.parse(output)
+          const stats = fs.statSync(filePath)
+          
+          resolve({
+            name: path.basename(filePath),
+            duration: parseFloat(data.format?.duration || data.streams?.[0]?.duration || 0),
+            resolution: {
+              width: data.streams?.[0]?.width || 1920,
+              height: data.streams?.[0]?.height || 1080
+            },
+            size: parseInt(data.format?.size || stats.size),
+            type: path.extname(filePath).slice(1).toUpperCase()
+          })
+        } catch (error) {
+          console.warn('[Recording] Failed to parse metadata, using fallback')
+          resolve({
+            name: path.basename(filePath),
+            duration: 0,
+            resolution: { width: 1920, height: 1080 },
+            size: buffer.length,
+            type: path.extname(filePath).slice(1).toUpperCase()
+          })
+        }
+      })
+    })
+
+    return {
+      success: true,
+      filePath,
+      metadata
+    }
+  } catch (error: any) {
+    console.error('[Recording] Failed to save recording:', error)
+    throw new Error(`Failed to save recording: ${error.message}`)
+  }
 })
 
