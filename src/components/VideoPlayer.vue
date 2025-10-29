@@ -1,223 +1,176 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
-import { useClipStore } from '@/stores/clips'
+import { usePlaybackStore } from '@/stores/playback'
 import { useTimelineStore } from '@/stores/timeline'
 import videojs from 'video.js'
 import type Player from 'video.js/dist/types/player'
 import 'video.js/dist/video-js.css'
 
-const clipStore = useClipStore()
+/**
+ * Video Player Component
+ * 
+ * Responsibilities:
+ * - Display video content
+ * - Control video.js player instance
+ * - Report playback events to playback store
+ * - React to playback commands from store
+ * 
+ * Does NOT:
+ * - Manage timeline sequencing (that's in playback store)
+ * - Handle clip transitions (that's in playback store)
+ * - Track playhead position (that's in playback store)
+ */
+
+const playbackStore = usePlaybackStore()
 const timelineStore = useTimelineStore()
+
 const videoRef = ref<HTMLVideoElement | null>(null)
 const player = ref<Player | null>(null)
-const isPlaying = ref(false)
-const currentTime = ref(0)
-const duration = ref(0)
 const volume = ref(100)
 
-// Playback state
-const isTimelinePlaying = ref(false)
-const nextClipToPreload = ref<number>(-1)
+// Local UI state (for display only)
+const currentTime = ref(0)
+const duration = ref(0)
 
-// Get the selected clip
-const selectedClip = computed(() => {
-  if (!clipStore.selectedClipId) return null
-  return clipStore.getClipById(clipStore.selectedClipId)
+// Check if we should show the video player
+const shouldShowPlayer = computed(() => {
+  return timelineStore.clips.length > 0
 })
 
-// Initialize Video.js player
-onMounted(() => {
-  if (videoRef.value) {
-    player.value = videojs(videoRef.value, {
-      controls: false, // We'll use custom controls
-      fluid: false,
-      responsive: false,
-      preload: 'metadata',
-      playbackRates: [0.25, 0.5, 1, 1.5, 2],
-    })
+// ============================================================================
+// Player Initialization
+// ============================================================================
 
-    // Listen to player events
-    player.value.on('play', () => {
-      isPlaying.value = true
-    })
+function initializePlayer() {
+  if (!videoRef.value || player.value) return
+  
+  console.log('[VideoPlayer] Initializing player')
+  
+  player.value = videojs(videoRef.value, {
+    controls: false,
+    fluid: false,
+    responsive: false,
+    preload: 'metadata',
+    playbackRates: [0.25, 0.5, 1, 1.5, 2],
+  })
 
-    player.value.on('pause', () => {
-      isPlaying.value = false
-    })
-
-    player.value.on('timeupdate', () => {
-      if (player.value) {
-        currentTime.value = player.value.currentTime() || 0
-        
-        // Handle timeline playback clip switching
-        if (isTimelinePlaying.value) {
-          handleTimelinePlayback()
-        }
-      }
-    })
-
-    player.value.on('loadedmetadata', () => {
-      if (player.value) {
-        duration.value = player.value.duration() || 0
-      }
-    })
-
-    player.value.on('ended', () => {
-      isPlaying.value = false
-      
-      // If timeline playing, try to advance to next clip
-      if (isTimelinePlaying.value) {
-        advanceToNextClip()
-      }
-    })
-
-    // Load initial clip if available
-    if (selectedClip.value) {
-      player.value.src({ src: `file://${selectedClip.value.path}`, type: 'video/mp4' })
+  // Listen to player events and report to playback store
+  player.value.on('timeupdate', () => {
+    if (!player.value) return
+    
+    const time = player.value.currentTime() || 0
+    currentTime.value = time
+    
+    // Report time to playback store (it will handle clip transitions)
+    if (playbackStore.isPlaying) {
+      playbackStore.updateTime(time)
     }
-  }
-})
+  })
 
-// Watch for clip changes and load new video
-watch(selectedClip, (newClip) => {
-  if (newClip && player.value) {
-    player.value.src({ src: `file://${newClip.path}`, type: 'video/mp4' })
-    player.value.load()
-    currentTime.value = 0
-    isPlaying.value = false
-  }
-})
+  player.value.on('loadedmetadata', () => {
+    if (player.value) {
+      duration.value = player.value.duration() || 0
+    }
+  })
 
-// Watch for timeline play state changes
-watch(() => timelineStore.isPlaying, (playing) => {
-  console.log('[VideoPlayer Watch] Timeline isPlaying changed to:', playing)
-  console.log('[VideoPlayer Watch] isTimelinePlaying.value:', isTimelinePlaying.value)
-  console.log('[VideoPlayer Watch] player.value exists:', !!player.value)
-  console.log('[VideoPlayer Watch] timeline clips count:', timelineStore.clips.length)
-  
-  if (playing && !isTimelinePlaying.value) {
-    console.log('[VideoPlayer Watch] Triggering playFromPlayhead()')
-    // Start timeline playback
-    playFromPlayhead()
-  } else if (!playing && isTimelinePlaying.value) {
-    console.log('[VideoPlayer Watch] Triggering stopTimelinePlayback()')
-    // Stop timeline playback
-    stopTimelinePlayback()
-  } else {
-    console.log('[VideoPlayer Watch] No action taken')
-  }
-})
+  player.value.on('ended', () => {
+    console.log('[VideoPlayer] Video ended')
+    // Playback store will handle advancing to next clip via updateTime
+  })
 
-// Sync video player with timeline playhead
-watch(() => timelineStore.playheadTime, (newTime) => {
-  if (!player.value || isPlaying.value) return
+  player.value.on('error', (error: any) => {
+    console.error('[VideoPlayer] Playback error:', error)
+  })
   
-  // Find which timeline clip contains this time
-  const currentTimelineClip = timelineStore.clips.find(clip =>
-    newTime >= clip.startTime && newTime < clip.startTime + clip.duration
-  )
-  
-  if (!currentTimelineClip) return
-  
-  // Get the source clip
-  const sourceClip = clipStore.getClipById(currentTimelineClip.clipId)
-  if (!sourceClip) return
-  
-  // Calculate time within the clip (accounting for trim)
-  const timeInTimeline = newTime - currentTimelineClip.startTime
-  const timeInSourceClip = currentTimelineClip.trimStart + timeInTimeline
-  
-  // Load clip if different from current
-  if (clipStore.selectedClipId !== currentTimelineClip.clipId) {
-    clipStore.selectClip(currentTimelineClip.clipId)
-  }
-  
-  // Seek to the correct position
-  const playerCurrentTime = player.value?.currentTime?.()
-  if (player.value && playerCurrentTime !== undefined && Math.abs(playerCurrentTime - timeInSourceClip) > 0.1) {
-    player.value.currentTime(timeInSourceClip)
-  }
-})
-
-// Play timeline from current playhead position
-const playFromPlayhead = async () => {
-  console.log('[VideoPlayer] ========== PLAY FROM PLAYHEAD ==========')
-  console.log('[VideoPlayer] playFromPlayhead() called')
-  console.log('[VideoPlayer] player.value:', !!player.value)
-  console.log('[VideoPlayer] timeline clips:', timelineStore.clips.length)
-  console.log('[VideoPlayer] playheadTime:', timelineStore.playheadTime)
-  console.log('[VideoPlayer] isTimelinePlaying:', isTimelinePlaying.value)
-  
-  if (!player.value || timelineStore.clips.length === 0) {
-    console.error('[VideoPlayer] Cannot play: player or clips missing')
-    return
-  }
-  
-  console.log('[VideoPlayer] Starting timeline playback from:', timelineStore.playheadTime)
-  
-  // Find clip at current playhead position
-  console.log('[VideoPlayer] Calling getClipIndexAtTime with:', timelineStore.playheadTime)
-  const startClipIndex = timelineStore.getClipIndexAtTime(timelineStore.playheadTime)
-  console.log('[VideoPlayer] Found clip index:', startClipIndex)
-  
-  if (startClipIndex === -1) {
-    console.warn('[VideoPlayer] No clip at current playhead position')
-    console.warn('[VideoPlayer] Timeline clips:', timelineStore.clips.map(c => ({
-      name: c.name,
-      startTime: c.startTime,
-      duration: c.duration,
-      endTime: c.startTime + c.duration
-    })))
-    return
-  }
-  
-  console.log('[VideoPlayer] Setting up playback state')
-  isTimelinePlaying.value = true
-  timelineStore.setPlaybackClip(startClipIndex)
-  timelineStore.startPlayback()
-  
-  console.log('[VideoPlayer] Loading and playing clip', startClipIndex)
-  // Load and play the clip
-  await loadAndPlayClip(startClipIndex)
-  
-  console.log('[VideoPlayer] Clip loaded and playing')
-  
-  // Preload next clip if exists
-  if (startClipIndex + 1 < timelineStore.clips.length) {
-    console.log('[VideoPlayer] Preloading next clip', startClipIndex + 1)
-    preloadClip(startClipIndex + 1)
-  }
+  console.log('[VideoPlayer] Player initialized')
 }
 
-// Load and play a specific timeline clip
-const loadAndPlayClip = async (clipIndex: number) => {
-  if (!player.value || clipIndex < 0 || clipIndex >= timelineStore.clips.length) return
+// Initialize player when clips are added (or on mount if clips already exist)
+watch(shouldShowPlayer, async (shouldShow) => {
+  if (shouldShow && !player.value) {
+    console.log('[VideoPlayer] shouldShowPlayer changed to true, initializing...')
+    // Wait for DOM to render video element
+    await nextTick()
+    initializePlayer()
+  }
+}, { immediate: true, flush: 'post' })
+
+// ============================================================================
+// Playback Control - React to Store Commands
+// ============================================================================
+
+// Watch for play command from store
+watch(() => playbackStore.isPlaying, async (playing) => {
+  // If player not initialized yet, wait for it
+  if (!player.value) {
+    if (shouldShowPlayer.value) {
+      console.log('[VideoPlayer] Player not ready, waiting for initialization...')
+      // Wait for the video element to render and player to initialize
+      await nextTick()
+      // Give initialization time to complete
+      let attempts = 0
+      while (!player.value && attempts < 10) {
+        await new Promise(resolve => setTimeout(resolve, 50))
+        attempts++
+      }
+      
+      if (!player.value) {
+        console.error('[VideoPlayer] Cannot respond to play command: player failed to initialize')
+        playbackStore.pause() // Reset state
+        return
+      }
+      console.log('[VideoPlayer] Player initialized after waiting')
+    } else {
+      console.warn('[VideoPlayer] Cannot respond to play command: no clips in timeline')
+      playbackStore.pause() // Reset state
+      return
+    }
+  }
   
-  const timelineClip = timelineStore.clips[clipIndex]
-  const sourceClip = clipStore.getClipById(timelineClip.clipId)
+  if (playing) {
+    console.log('[VideoPlayer] Play command received')
+    await loadAndPlayCurrentClip()
+  } else {
+    console.log('[VideoPlayer] Pause command received')
+    player.value.pause()
+  }
+})
+
+// Watch for clip changes during playback
+watch(() => playbackStore.currentClipIndex, async (newIndex, oldIndex) => {
+  if (newIndex === -1 || newIndex === oldIndex || !playbackStore.isPlaying) return
   
-  if (!sourceClip) {
-    console.error('[VideoPlayer] Source clip not found:', timelineClip.clipId)
+  console.log('[VideoPlayer] Clip changed from', oldIndex, 'to', newIndex)
+  await loadAndPlayCurrentClip()
+})
+
+/**
+ * Load and play the current clip from playback store
+ */
+async function loadAndPlayCurrentClip() {
+  if (!player.value) return
+  
+  const source = playbackStore.currentVideoSource
+  const startTime = playbackStore.currentVideoStartTime
+  
+  if (!source) {
+    console.error('[VideoPlayer] No video source to play')
     return
   }
   
-  console.log('[VideoPlayer] Loading clip', clipIndex, ':', timelineClip.name)
+  console.log('[VideoPlayer] Loading:', source, 'start at:', startTime)
   
-  // Load the source video
-  player.value.src({ src: `file://${sourceClip.path}`, type: 'video/mp4' })
+  // Load the video source
+  player.value.src({ src: `file://${source}`, type: 'video/mp4' })
   
-  // Calculate where to start playing within the source clip
-  const timeInTimeline = timelineStore.playheadTime - timelineClip.startTime
-  const startTimeInSource = timelineClip.trimStart + Math.max(0, timeInTimeline)
-  
-  // Wait for video to be ready
+  // Wait for video to be ready, then seek and play
   await new Promise<void>((resolve) => {
     const onLoadedData = () => {
       if (player.value) {
         player.value.off('loadeddata', onLoadedData)
-        player.value.currentTime(startTimeInSource)
+        player.value.currentTime(startTime)
         resolve()
       }
     }
@@ -226,136 +179,71 @@ const loadAndPlayClip = async (clipIndex: number) => {
   })
   
   // Start playing
-  await player.value.play()
-}
-
-// Handle timeline playback updates
-const handleTimelinePlayback = () => {
-  if (!player.value || timelineStore.currentPlaybackClipIndex === -1) return
-  
-  const currentClipIndex = timelineStore.currentPlaybackClipIndex
-  const timelineClip = timelineStore.clips[currentClipIndex]
-  
-  if (!timelineClip) return
-  
-  // Calculate current position in source clip
-  const currentTimeInSource = player.value.currentTime() || 0
-  const timeFromTrimStart = currentTimeInSource - timelineClip.trimStart
-  
-  // Update timeline playhead
-  const newPlayheadTime = timelineClip.startTime + timeFromTrimStart
-  timelineStore.setPlayhead(newPlayheadTime)
-  
-  // Log every second for debugging
-  if (Math.floor(newPlayheadTime) !== Math.floor(timelineStore.playheadTime)) {
-    console.log('[VideoPlayer] Playhead at:', newPlayheadTime.toFixed(2), 'clip:', currentClipIndex)
-  }
-  
-  // Check if we've reached the end of this clip's trimmed section
-  if (currentTimeInSource >= timelineClip.trimEnd - 0.1) {
-    console.log('[VideoPlayer] Reached end of clip', currentClipIndex)
-    advanceToNextClip()
+  try {
+    await player.value.play()
+    console.log('[VideoPlayer] Playing')
+  } catch (error) {
+    console.error('[VideoPlayer] Play failed:', error)
   }
 }
 
-// Advance to next clip in timeline
-const advanceToNextClip = async () => {
-  const currentIndex = timelineStore.currentPlaybackClipIndex
-  const nextIndex = currentIndex + 1
+// ============================================================================
+// Preview Mode (when not playing)
+// ============================================================================
+
+// When playhead changes and not playing, show preview
+watch(() => playbackStore.currentTime, (newTime) => {
+  if (playbackStore.isPlaying || !player.value) return
   
-  console.log('[VideoPlayer] Advancing from clip', currentIndex, 'to', nextIndex)
+  const clipInfo = playbackStore.getClipAtTime(newTime)
   
-  if (nextIndex >= timelineStore.clips.length) {
-    // Reached end of timeline
-    console.log('[VideoPlayer] Reached end of timeline')
-    stopTimelinePlayback()
+  if (!clipInfo) {
+    // No clip at this position
     return
   }
   
-  // Move to next clip
-  timelineStore.setPlaybackClip(nextIndex)
-  const nextClip = timelineStore.clips[nextIndex]
-  timelineStore.setPlayhead(nextClip.startTime)
+  const { sourceClip, timeInSource } = clipInfo
   
-  // Load and play next clip
-  await loadAndPlayClip(nextIndex)
+  // Load video if different
+  const currentSrc = player.value.currentSrc()
+  const newSrc = `file://${sourceClip.path}`
   
-  // Preload the clip after this one
-  if (nextIndex + 1 < timelineStore.clips.length) {
-    preloadClip(nextIndex + 1)
-  }
-}
-
-// Preload next clip for smooth transitions
-const preloadClip = (clipIndex: number) => {
-  if (clipIndex < 0 || clipIndex >= timelineStore.clips.length) return
-  
-  const timelineClip = timelineStore.clips[clipIndex]
-  const sourceClip = clipStore.getClipById(timelineClip.clipId)
-  
-  if (!sourceClip) return
-  
-  console.log('[VideoPlayer] Preloading clip', clipIndex, ':', timelineClip.name)
-  nextClipToPreload.value = clipIndex
-  
-  // Create a temporary video element to preload
-  const preloadVideo = document.createElement('video')
-  preloadVideo.src = `file://${sourceClip.path}`
-  preloadVideo.preload = 'auto'
-  preloadVideo.load()
-}
-
-// Stop timeline playback
-const stopTimelinePlayback = () => {
-  console.log('[VideoPlayer] Stopping timeline playback')
-  
-  isTimelinePlaying.value = false
-  
-  if (player.value) {
-    player.value.pause()
+  if (!currentSrc.includes(sourceClip.path)) {
+    console.log('[VideoPlayer] Loading preview:', sourceClip.name)
+    player.value.src({ src: newSrc, type: 'video/mp4' })
+    player.value.load()
   }
   
-  // Update store state if not already stopped
-  if (timelineStore.isPlaying) {
-    timelineStore.stopPlayback()
+  // Seek to position
+  const currentPlayerTime = player.value.currentTime() || 0
+  if (Math.abs(currentPlayerTime - timeInSource) > 0.1) {
+    player.value.currentTime(timeInSource)
   }
-  
-  console.log('[VideoPlayer] Stopped at playhead:', timelineStore.playheadTime)
-}
+})
 
-// Play/Pause toggle
+// ============================================================================
+// Direct Player Controls (for testing/manual control)
+// ============================================================================
+
 const togglePlayPause = () => {
-  if (!player.value) return
-  
-  if (isPlaying.value || isTimelinePlaying.value) {
-    // Stop playback
-    stopTimelinePlayback()
-    player.value.pause()
-  } else {
-    // Start timeline playback from current position
-    playFromPlayhead()
-  }
+  playbackStore.togglePlayPause()
 }
 
-// Seek controls
+const skipBackward = () => {
+  const newTime = Math.max(0, playbackStore.currentTime - 5)
+  playbackStore.seekTo(newTime)
+}
+
+const skipForward = () => {
+  const newTime = Math.min(timelineStore.totalDuration, playbackStore.currentTime + 5)
+  playbackStore.seekTo(newTime)
+}
+
 const handleSeek = (value: number) => {
   if (!player.value) return
   player.value.currentTime(value)
 }
 
-const skipBackward = () => {
-  if (!player.value) return
-  const current = player.value.currentTime() || 0
-  player.value.currentTime(Math.max(0, current - 5))
-}
-
-const skipForward = () => {
-  if (!player.value) return
-  const current = player.value.currentTime() || 0
-  player.value.currentTime(Math.min(duration.value, current + 5))
-}
-
-// Volume controls
 const handleVolumeChange = (value: number) => {
   if (!player.value) return
   volume.value = value
@@ -375,7 +263,10 @@ const formatTime = (seconds: number) => {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
-// Cleanup on unmount
+// ============================================================================
+// Cleanup
+// ============================================================================
+
 onBeforeUnmount(() => {
   if (player.value) {
     player.value.dispose()
@@ -387,8 +278,8 @@ onBeforeUnmount(() => {
   <div class="space-y-4">
     <div class="flex justify-between items-center">
       <h2 class="text-xl font-semibold">Preview</h2>
-      <span v-if="selectedClip" class="text-sm text-muted-foreground">
-        {{ selectedClip.name }}
+      <span v-if="playbackStore.currentSourceClip" class="text-sm text-muted-foreground">
+        {{ playbackStore.currentSourceClip.name }}
       </span>
     </div>
 
@@ -396,7 +287,7 @@ onBeforeUnmount(() => {
     <div class="relative rounded-lg border bg-black aspect-video overflow-hidden">
       <!-- No clip selected state -->
       <div
-        v-if="!selectedClip"
+        v-if="!shouldShowPlayer"
         class="absolute inset-0 flex items-center justify-center text-muted-foreground"
       >
         <div class="text-center">
@@ -414,20 +305,20 @@ onBeforeUnmount(() => {
           >
             <polygon points="5 3 19 12 5 21 5 3" />
           </svg>
-          <p class="text-lg">Select a clip to preview</p>
+          <p class="text-lg">Add clips to timeline to get started</p>
         </div>
       </div>
 
       <!-- Video Element with Video.js -->
       <video
-        v-if="selectedClip"
+        v-if="shouldShowPlayer"
         ref="videoRef"
         class="video-js vjs-big-play-centered w-full h-full"
       ></video>
     </div>
 
     <!-- Controls -->
-    <div v-if="selectedClip" class="space-y-3">
+    <div v-if="shouldShowPlayer" class="space-y-3">
       <!-- Timeline/Seek Bar -->
       <div class="flex items-center gap-3">
         <span class="text-sm text-muted-foreground w-12 text-right">
@@ -470,7 +361,7 @@ onBeforeUnmount(() => {
           size="lg"
         >
           <svg
-            v-if="!isPlaying"
+            v-if="!playbackStore.isPlaying"
             xmlns="http://www.w3.org/2000/svg"
             width="20"
             height="20"
@@ -492,7 +383,7 @@ onBeforeUnmount(() => {
             <rect x="6" y="4" width="4" height="16" />
             <rect x="14" y="4" width="4" height="16" />
           </svg>
-          <span class="ml-2">{{ isPlaying ? 'Pause' : 'Play' }}</span>
+          <span class="ml-2">{{ playbackStore.isPlaying ? 'Pause' : 'Play' }}</span>
         </Button>
         <Button
           @click="skipForward"
@@ -546,5 +437,4 @@ onBeforeUnmount(() => {
     </div>
   </div>
 </template>
-
 

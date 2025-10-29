@@ -4,9 +4,11 @@ import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { useTimelineStore, type TimelineClip } from '@/stores/timeline'
 import { useClipStore } from '@/stores/clips'
+import { usePlaybackStore } from '@/stores/playback'
 
 const timelineStore = useTimelineStore()
 const clipStore = useClipStore()
+const playbackStore = usePlaybackStore()
 
 // Refs for thumbnail generation
 const hiddenVideoRef = ref<HTMLVideoElement | null>(null)
@@ -241,11 +243,11 @@ const getClipStyle = (clip: TimelineClip) => {
   }
 }
 
-// SIMPLIFIED: Always sync scroll position to store playhead time
-watch(() => timelineStore.playheadTime, (newTime) => {
+// Sync scroll position to playhead time from playback store
+watch(() => playbackStore.currentTime, (newTime) => {
   if (!timelineContainerRef.value) return
   
-  console.log('[Timeline] Store playhead changed to:', newTime.toFixed(2))
+  console.log('[Timeline] Playhead changed to:', newTime.toFixed(2))
   
   // Calculate scroll position to center the playhead at this time
   const containerWidth = timelineContainerRef.value.clientWidth
@@ -255,22 +257,22 @@ watch(() => timelineStore.playheadTime, (newTime) => {
   // Scroll to position (smooth when not playing, instant when playing)
   timelineContainerRef.value.scrollTo({
     left: newScrollLeft,
-    behavior: timelineStore.isPlaying ? 'auto' : 'smooth'
+    behavior: playbackStore.isPlaying ? 'auto' : 'smooth'
   })
   
   timelineScrollLeft.value = newScrollLeft
 })
 
-// Update store playhead time when user manually scrolls (only when NOT playing)
+// Update playhead time when user manually scrolls (only when NOT playing)
 const updatePlayheadFromScroll = () => {
-  if (timelineStore.isPlaying || !timelineContainerRef.value) return
+  if (playbackStore.isPlaying || !timelineContainerRef.value) return
   
   const containerWidth = timelineContainerRef.value.clientWidth
   const centerPosition = timelineScrollLeft.value + (containerWidth / 2) - timelinePadding.value
   const newTime = Math.max(0, centerPosition / pixelsPerSecond.value)
   
   console.log('[Timeline] User scrolled, updating playhead to:', newTime.toFixed(2))
-  timelineStore.setPlayhead(newTime)
+  playbackStore.seekTo(newTime)
 }
 
 // Drag to scroll timeline
@@ -345,8 +347,8 @@ const handleTimeRulerClick = (e: MouseEvent) => {
   
   console.log('[Timeline] Time ruler clicked at:', newTime.toFixed(2))
   
-  // SIMPLIFIED: Just update the store playhead - scroll will follow automatically
-  timelineStore.setPlayhead(newTime)
+  // Seek to the clicked time
+  playbackStore.seekTo(newTime)
   
   timelineDragDistance.value = 0
 }
@@ -354,24 +356,18 @@ const handleTimeRulerClick = (e: MouseEvent) => {
 // Toggle timeline playback
 const toggleTimelinePlayback = () => {
   console.log('[Timeline] toggleTimelinePlayback called')
-  console.log('[Timeline] Current isPlaying:', timelineStore.isPlaying)
-  console.log('[Timeline] Current playheadTime:', timelineStore.playheadTime)
+  console.log('[Timeline] Current isPlaying:', playbackStore.isPlaying)
+  console.log('[Timeline] Current playhead time:', playbackStore.currentTime)
   console.log('[Timeline] Timeline clips:', timelineStore.clips.length)
   
-  if (timelineStore.isPlaying) {
-    console.log('[Timeline] Calling pause()')
-    timelineStore.pause()
-  } else {
-    console.log('[Timeline] Calling play()')
-    timelineStore.play()
-  }
+  playbackStore.togglePlayPause()
   
-  console.log('[Timeline] After toggle, isPlaying:', timelineStore.isPlaying)
+  console.log('[Timeline] After toggle, isPlaying:', playbackStore.isPlaying)
 }
 
 // Split clip at playhead
 const splitClipAtPlayhead = async () => {
-  const currentTime = timelineStore.playheadTime
+  const currentTime = playbackStore.currentTime
   
   // Find clip that contains the playhead
   const clipToSplit = timelineStore.clips.find(clip =>
@@ -451,7 +447,7 @@ const splitClipAtPlayhead = async () => {
           :disabled="timelineStore.clips.length === 0"
         >
           <svg
-            v-if="!timelineStore.isPlaying"
+            v-if="!playbackStore.isPlaying"
             xmlns="http://www.w3.org/2000/svg"
             width="16"
             height="16"
@@ -473,7 +469,7 @@ const splitClipAtPlayhead = async () => {
             <rect x="6" y="4" width="4" height="16" />
             <rect x="14" y="4" width="4" height="16" />
           </svg>
-          {{ timelineStore.isPlaying ? 'Pause' : 'Play' }}
+          {{ playbackStore.isPlaying ? 'Pause' : 'Play' }}
         </Button>
 
         <Button 
@@ -552,18 +548,18 @@ const splitClipAtPlayhead = async () => {
         <!-- Fixed Playhead Indicator -->
         <div 
           class="absolute top-0 bottom-0 left-1/2 w-0.5 z-50 pointer-events-none transition-colors"
-          :class="timelineStore.isPlaying ? 'bg-green-500' : 'bg-red-500'"
+          :class="playbackStore.isPlaying ? 'bg-green-500' : 'bg-red-500'"
           style="transform: translateX(-50%);"
         >
           <div 
             class="absolute -top-1 -left-1.5 w-3 h-3 rounded-full transition-colors"
-            :class="timelineStore.isPlaying ? 'bg-green-500' : 'bg-red-500'"
+            :class="playbackStore.isPlaying ? 'bg-green-500' : 'bg-red-500'"
           ></div>
           <div 
             class="absolute top-8 left-1/2 -translate-x-1/2 text-white text-xs px-2 py-1 rounded whitespace-nowrap pointer-events-auto transition-colors"
-            :class="timelineStore.isPlaying ? 'bg-green-500' : 'bg-red-500'"
+            :class="playbackStore.isPlaying ? 'bg-green-500' : 'bg-red-500'"
           >
-            {{ formatTime(timelineStore.playheadTime) }}
+            {{ formatTime(playbackStore.currentTime) }}
           </div>
         </div>
 
