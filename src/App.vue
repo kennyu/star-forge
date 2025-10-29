@@ -62,7 +62,7 @@ watch([() => exportStore.exportProgress, () => exportStore.lastExportPath, () =>
     <!-- Header -->
         <header class="border-b">
           <div class="container flex h-16 items-center px-4">
-            <h1 class="text-2xl font-bold">ClipForge</h1>
+            <h1 class="text-2xl font-bold">Star-Forge</h1>
             <div class="ml-auto flex items-center space-x-4">
               <!-- Export Job Progress Indicator -->
               <div v-if="exportStore.isExporting" class="flex items-center gap-3 px-4 py-2 bg-primary/10 rounded-lg border border-primary/20">

@@ -1,4 +1,4 @@
-## ClipForge — Simplified Technical Overview
+## Star-Forge — Simplified Technical Overview
 
 ### Goal
 
@@ -97,6 +97,6 @@ Purpose: prove working media I/O and rendering loop (import → display → trim
 
 ### Simplified Summary
 
-> ClipForge is a **3-day sprint** to build a functional **desktop video editor** using Electron + Vue + FFmpeg.
+> Star-Forge is a **3-day sprint** to build a functional **desktop video editor** using Electron + Vue + FFmpeg.
 > Focus on the **core loop**: **Record → Import → Arrange → Export.**
 > Keep it stable, fast, and easy to package.

@@ -1,11 +1,12 @@
 {
-  "name": "clipforge",
+  "name": "Star-Forge",
   "version": "1.0.0",
   "description": "Desktop video editor built with Electron + Vue + FFmpeg",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build && electron-builder",
+    "build": "vite build && electron-builder",
+    "build:check": "vue-tsc --noEmit && vite build && electron-builder",
     "preview": "vite preview",
     "electron:dev": "vite --mode electron",
     "electron:build": "vite build && electron-builder"
@@ -14,15 +15,17 @@
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@ffmpeg/ffmpeg": "^0.12.10",
     "@ffmpeg/util": "^0.12.1",
-    "electron": "^32.0.0",
+    "@types/video.js": "^7.3.58",
     "ffprobe-static": "^3.1.0",
     "pinia": "^2.1.0",
+    "video.js": "^8.23.4",
     "vue": "^3.4.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.0",
     "autoprefixer": "^10.4.0",
     "clsx": "^2.1.0",
+    "electron": "^32.0.0",
     "electron-builder": "^24.0.0",
     "postcss": "^8.4.0",
     "tailwind-merge": "^2.2.0",
@@ -34,23 +37,34 @@
     "vue-tsc": "^1.8.0"
   },
   "build": {
-    "appId": "com.clipforge.app",
-    "productName": "ClipForge",
+    "appId": "com.starforge.app",
+    "productName": "Star-Forge",
     "directories": {
       "output": "release"
     },
+    "win": {
+      "target": "dir",
+      "icon": "build/icon.ico"
+    },
     "files": [
       "dist/**/*",
-      "dist-electron/**/*"
+      "dist-electron/**/*",
+      "node_modules/@ffmpeg-installer/**/*",
+      "node_modules/ffprobe-static/**/*"
     ],
-    "win": {
-      "target": "nsis"
-    },
+    "asarUnpack": [
+      "node_modules/@ffmpeg-installer/**/*",
+      "node_modules/ffprobe-static/**/*"
+    ],
     "mac": {
-      "target": "dmg"
+      "target": "dmg",
+      "icon": "build/icon.icns",
+      "category": "public.app-category.video"
     },
     "linux": {
-      "target": "AppImage"
+      "target": ["AppImage", "deb"],
+      "icon": "build/icon.png",
+      "category": "Video"
     }
   }
 }

@@ -1,5 +1,5 @@
 <!-- 8b647fc4-769b-44c5-8741-13403fbe912e fb3241c4-23bd-4a56-9ee2-4ccf46d44f34 -->
-# ClipForge - Layered Feature Build Plan
+# Star-Forge - Layered Feature Build Plan
 
 ## Technology Stack
 
@@ -68,7 +68,7 @@
 ### Project Structure
 
 ```
-clipforge2/
+Star-Forge/
 ├── electron/
 │   └── main.ts              # Main process
 ├── src/
