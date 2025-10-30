@@ -66,8 +66,6 @@ export const usePlaybackStore = defineStore('playback', () => {
    * Start timeline playback from current playhead position
    */
   function play() {
-    console.log('[Playback] Play requested at time:', currentTime.value)
-    
     if (timelineStore.clips.length === 0) {
       console.warn('[Playback] Cannot play: no clips in timeline')
       return
@@ -85,8 +83,6 @@ export const usePlaybackStore = defineStore('playback', () => {
     currentClipIndex.value = clipIndex
     loadCurrentClip()
     isPlaying.value = true
-    
-    console.log('[Playback] Started playing clip', clipIndex)
   }
   
   /**
@@ -194,13 +190,6 @@ export const usePlaybackStore = defineStore('playback', () => {
     currentVideoSource.value = sourceClip.path
     currentVideoStartTime.value = startTimeInSource
     currentVideoEndTime.value = timelineClip.trimEnd
-    
-    console.log('[Playback] Loaded clip:', {
-      name: timelineClip.name,
-      source: sourceClip.path,
-      startAt: startTimeInSource,
-      endAt: timelineClip.trimEnd
-    })
   }
   
   /**
@@ -240,12 +229,16 @@ export const usePlaybackStore = defineStore('playback', () => {
    */
   function getClipAtTime(time: number) {
     const index = findClipIndexAtTime(time)
+    
     if (index === -1) return null
     
     const timelineClip = timelineStore.clips[index]
     const sourceClip = clipStore.getClipById(timelineClip.clipId)
     
-    if (!sourceClip) return null
+    if (!sourceClip) {
+      console.error('[Playback] Source clip not found for clipId:', timelineClip.clipId)
+      return null
+    }
     
     const timeInTimeline = time - timelineClip.startTime
     const timeInSource = timelineClip.trimStart + timeInTimeline

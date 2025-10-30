@@ -193,7 +193,6 @@ async function loadAndPlayCurrentClip() {
   }
   
   const mimeType = getMimeType(source)
-  console.log('[VideoPlayer] Loading:', source, 'type:', mimeType, 'start at:', startTime)
   
   // Load the video source with correct MIME type
   player.value.src({ src: `file://${source}`, type: mimeType })
@@ -214,7 +213,6 @@ async function loadAndPlayCurrentClip() {
   // Start playing
   try {
     await player.value.play()
-    console.log('[VideoPlayer] Playing')
   } catch (error) {
     console.error('[VideoPlayer] Play failed:', error)
   }
@@ -230,10 +228,7 @@ watch(() => playbackStore.currentTime, (newTime) => {
   
   const clipInfo = playbackStore.getClipAtTime(newTime)
   
-  if (!clipInfo) {
-    // No clip at this position
-    return
-  }
+  if (!clipInfo) return
   
   const { sourceClip, timeInSource } = clipInfo
   
@@ -243,7 +238,6 @@ watch(() => playbackStore.currentTime, (newTime) => {
   
   if (!currentSrc.includes(sourceClip.path)) {
     const mimeType = getMimeType(sourceClip.path)
-    console.log('[VideoPlayer] Loading preview:', sourceClip.name, 'type:', mimeType)
     player.value.src({ src: newSrc, type: mimeType })
     player.value.load()
   }
