@@ -9,7 +9,7 @@ import { usePlaybackStore } from '@/stores/playback'
 // Constants
 const THUMBNAIL_WIDTH = 160
 const THUMBNAIL_HEIGHT = 90
-const THUMBNAIL_INTERVAL = 0.1 // seconds between thumbnails
+const THUMBNAIL_INTERVAL = 0.25 // seconds between thumbnails
 const PIXELS_PER_SECOND_BASE = 100
 const TIME_MARKER_INTERVAL = 5 // seconds
 const MIN_SPLIT_DISTANCE = 0.1 // seconds from edge
