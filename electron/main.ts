@@ -98,7 +98,7 @@ ipcMain.handle('ffmpeg:getMetadata', async (_, filePath: string) => {
     
     const ffprobe = spawn(ffprobePath, [
       '-v', 'error',
-      '-show_entries', 'stream=width,height,duration,r_frame_rate,nb_frames',
+      '-show_entries', 'stream=width,height,duration,r_frame_rate,nb_frames,pix_fmt,codec_type',
       '-show_entries', 'format=duration,size,bit_rate',
       '-of', 'json',
       filePath
@@ -130,18 +130,22 @@ ipcMain.handle('ffmpeg:getMetadata', async (_, filePath: string) => {
         const stats = fs.statSync(filePath)
         const fileName = path.basename(filePath)
         
+        // Find video and audio streams
+        const videoStream = data.streams?.find((s: any) => s.codec_type === 'video')
+        const audioStream = data.streams?.find((s: any) => s.codec_type === 'audio')
+        
         // Extract duration
         const formatDuration = data.format?.duration
-        const streamDuration = data.streams?.[0]?.duration
+        const streamDuration = videoStream?.duration
         console.log('[FFprobe] Duration sources - format:', formatDuration, 'stream:', streamDuration)
         
         let duration = parseFloat(formatDuration || streamDuration || 0)
         
         // Quick fallback: Calculate from frame count and frame rate if available
-        if ((duration === 0 || isNaN(duration)) && data.streams?.[0]?.nb_frames && data.streams?.[0]?.r_frame_rate) {
+        if ((duration === 0 || isNaN(duration)) && videoStream?.nb_frames && videoStream?.r_frame_rate) {
           console.log('[FFprobe] Duration is 0/NaN, trying frame count calculation...')
-          const nbFrames = parseInt(data.streams[0].nb_frames)
-          const frameRate = data.streams[0].r_frame_rate
+          const nbFrames = parseInt(videoStream.nb_frames)
+          const frameRate = videoStream.r_frame_rate
           
           // Parse frame rate (e.g., "30/1" or "30000/1001")
           const [num, den] = frameRate.split('/').map(Number)
@@ -159,15 +163,27 @@ ipcMain.handle('ffmpeg:getMetadata', async (_, filePath: string) => {
         
         console.log('[FFprobe] Final duration value:', duration)
         
+        // Extract FPS
+        let fps = 30 // default
+        if (videoStream?.r_frame_rate) {
+          const [num, den] = videoStream.r_frame_rate.split('/').map(Number)
+          if (num && den) {
+            fps = num / den
+          }
+        }
+        
         const metadata = {
           name: fileName,
           duration: duration,
           resolution: {
-            width: data.streams?.[0]?.width || 0,
-            height: data.streams?.[0]?.height || 0
+            width: videoStream?.width || 0,
+            height: videoStream?.height || 0
           },
           size: parseInt(data.format?.size || stats.size),
-          type: path.extname(filePath).slice(1).toUpperCase()
+          type: path.extname(filePath).slice(1).toUpperCase(),
+          fps: fps,
+          pixelFormat: videoStream?.pix_fmt || 'yuv420p',
+          hasAudio: !!audioStream
         }
 
         console.log('[FFprobe] Final metadata:', JSON.stringify(metadata, null, 2))
@@ -290,6 +306,20 @@ ipcMain.handle('ffmpeg:cancel', async () => {
   return { success: false, message: 'No active export process' }
 })
 
+// Helper function to get target dimensions based on quality setting
+function getTargetDimensions(quality: '720p' | '1080p' | 'source', sourceFiles: string[]): { width: number, height: number } {
+  if (quality === '720p') {
+    return { width: 1280, height: 720 }
+  }
+  if (quality === '1080p') {
+    return { width: 1920, height: 1080 }
+  }
+  
+  // For 'source' quality, we'll use 1080p as default
+  // In a real implementation, you'd analyze all source files to find max resolution
+  return { width: 1920, height: 1080 }
+}
+
 // Export timeline with multiple clips
 ipcMain.handle('ffmpeg:exportTimeline', async (event, options: {
   clips: Array<{
@@ -302,11 +332,16 @@ ipcMain.handle('ffmpeg:exportTimeline', async (event, options: {
   quality: '720p' | '1080p' | 'source',
   totalDuration: number
 }) => {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     const { clips, outputPath, quality, totalDuration } = options
 
     // Build list of unique input files
     const uniqueFiles = Array.from(new Set(clips.map(c => c.sourceFilePath)))
+    
+    console.log('[FFmpeg Timeline] Starting timeline export')
+    console.log('[FFmpeg Timeline] Unique input files:', uniqueFiles.length)
+    console.log('[FFmpeg Timeline] Total clips:', clips.length)
+    console.log('[FFmpeg Timeline] Quality:', quality)
     
     // Check if output file is same as any input file
     const normalizedOutput = path.normalize(outputPath.toLowerCase())
@@ -323,41 +358,96 @@ ipcMain.handle('ffmpeg:exportTimeline', async (event, options: {
       return
     }
     
-    // Build filter_complex string
+    // Get metadata for each unique file to check for audio streams
+    const fileMetadata = new Map<string, { hasAudio: boolean }>()
+    
+    try {
+      for (const filePath of uniqueFiles) {
+        console.log('[FFmpeg Timeline] Analyzing file:', filePath)
+        
+        // Quick probe for audio stream only
+        const metadata = await new Promise<{ hasAudio: boolean }>((resolveProbe, rejectProbe) => {
+          const ffprobePath = getBinaryPath(ffprobeStatic.path)
+          const ffprobe = spawn(ffprobePath, [
+            '-v', 'error',
+            '-show_entries', 'stream=codec_type',
+            '-of', 'json',
+            filePath
+          ])
+
+          let output = ''
+          ffprobe.stdout.on('data', (data) => { output += data.toString() })
+          ffprobe.on('close', (code) => {
+            if (code !== 0) {
+              console.warn('[FFmpeg Timeline] FFprobe failed for', filePath, '- assuming no audio')
+              resolveProbe({ hasAudio: false })
+              return
+            }
+            
+            try {
+              const data = JSON.parse(output)
+              const hasAudio = data.streams?.some((s: any) => s.codec_type === 'audio') || false
+              console.log('[FFmpeg Timeline] File', path.basename(filePath), 'has audio:', hasAudio)
+              resolveProbe({ hasAudio })
+            } catch (error) {
+              console.warn('[FFmpeg Timeline] Failed to parse probe result - assuming no audio')
+              resolveProbe({ hasAudio: false })
+            }
+          })
+        })
+        
+        fileMetadata.set(filePath, metadata)
+      }
+    } catch (error) {
+      console.error('[FFmpeg Timeline] Failed to analyze input files:', error)
+      reject(new Error('Failed to analyze input files'))
+      return
+    }
+    
+    // Determine target dimensions and frame rate
+    const targetDims = getTargetDimensions(quality, uniqueFiles)
+    const targetFps = 30 // Standard frame rate
+    
+    console.log('[FFmpeg Timeline] Target dimensions:', targetDims)
+    console.log('[FFmpeg Timeline] Target FPS:', targetFps)
+    
+    // Build filter_complex string with normalization
     let filterParts: string[] = []
     
     clips.forEach((clip, clipIndex) => {
       const inputIndex = uniqueFiles.indexOf(clip.sourceFilePath)
+      const metadata = fileMetadata.get(clip.sourceFilePath)!
       
-      // Trim video and audio for this clip
-      const videoLabel = `v${clipIndex}`
-      const audioLabel = `a${clipIndex}`
+      // Video processing: trim → scale with aspect ratio preservation → pad → fps normalize → pixel format
+      filterParts.push(
+        `[${inputIndex}:v]trim=start=${clip.trimStart}:end=${clip.trimEnd},setpts=PTS-STARTPTS,` +
+        `scale=${targetDims.width}:${targetDims.height}:force_original_aspect_ratio=decrease,` +
+        `pad=${targetDims.width}:${targetDims.height}:(ow-iw)/2:(oh-ih)/2,` +
+        `fps=${targetFps},setsar=1,format=yuv420p[v${clipIndex}]`
+      )
       
-      filterParts.push(
-        `[${inputIndex}:v]trim=start=${clip.trimStart}:end=${clip.trimEnd},setpts=PTS-STARTPTS[${videoLabel}]`
-      )
-      filterParts.push(
-        `[${inputIndex}:a]atrim=start=${clip.trimStart}:end=${clip.trimEnd},asetpts=PTS-STARTPTS[${audioLabel}]`
-      )
+      // Audio processing: either use existing audio or generate silent audio
+      if (metadata.hasAudio) {
+        filterParts.push(
+          `[${inputIndex}:a]atrim=start=${clip.trimStart}:end=${clip.trimEnd},` +
+          `asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a${clipIndex}]`
+        )
+      } else {
+        // Generate silent audio for video-only files
+        filterParts.push(
+          `anullsrc=channel_layout=stereo:sample_rate=48000,` +
+          `atrim=duration=${clip.duration}[a${clipIndex}]`
+        )
+      }
     })
     
     // Build concat inputs - must be interleaved: [v0][a0][v1][a1]...
     const concatInputs = clips.map((_, i) => `[v${i}][a${i}]`).join('')
     
-    // Concat filter
+    // Concat filter - no additional processing needed since clips are already normalized
     filterParts.push(
-      `${concatInputs}concat=n=${clips.length}:v=1:a=1[vtmp][aout]`
+      `${concatInputs}concat=n=${clips.length}:v=1:a=1[vout][aout]`
     )
-    
-    // Apply scaling to concatenated video (if needed)
-    if (quality === '720p') {
-      filterParts.push('[vtmp]scale=-2:720[vout]')
-    } else if (quality === '1080p') {
-      filterParts.push('[vtmp]scale=-2:1080[vout]')
-    } else {
-      // No scaling for source quality - just pass through
-      filterParts.push('[vtmp]null[vout]')
-    }
     
     const filterComplex = filterParts.join(';')
     
@@ -380,7 +470,7 @@ ipcMain.handle('ffmpeg:exportTimeline', async (event, options: {
     args.push('-c:a', 'aac', '-b:a', '192k')
     args.push('-movflags', '+faststart')
     
-    // Quality settings (bitrate only, scaling is in filter_complex)
+    // Quality settings (bitrate)
     if (quality === '720p') {
       args.push('-b:v', '2500k')
     } else if (quality === '1080p') {

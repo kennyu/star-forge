@@ -64,20 +64,10 @@ const handleCancelExport = async () => {
 const handleSingleClipExport = async () => {
   if (!selectedClip.value) return
 
-  console.log('[Export] Starting single clip export:', {
-    clipName: selectedClip.value.name,
-    clipPath: selectedClip.value.path,
-    duration: selectedClip.value.duration,
-    quality: selectedQuality.value
-  })
-
   const outputPath = await ipcRenderer.invoke('dialog:saveFile', `${selectedClip.value.name}_export.mp4`)
   if (!outputPath) {
-    console.log('[Export] User cancelled save dialog')
     return
   }
-
-  console.log('[Export] Output path selected:', outputPath)
 
   exportStore.startExport(`Exporting: ${selectedClip.value.name}`, true)
   emit('update:open', false) // Close dialog, show progress in header
@@ -90,7 +80,6 @@ const handleSingleClipExport = async () => {
       duration: selectedClip.value.duration
     })
 
-    console.log('[Export] Single clip export successful:', result)
     exportStore.completeExport(outputPath)
   } catch (error: any) {
     console.error('[Export] Single clip export failed:', error)
@@ -102,43 +91,20 @@ const handleSingleClipExport = async () => {
 const handleTimelineExport = async () => {
   if (timelineStore.clips.length === 0) return
 
-  console.log('[Export] Starting timeline export:', {
-    clipCount: timelineStore.clips.length,
-    totalDuration: timelineStore.totalDuration,
-    quality: selectedQuality.value
-  })
-
   const outputPath = await ipcRenderer.invoke('dialog:saveFile', 'timeline_export.mp4')
   if (!outputPath) {
-    console.log('[Export] User cancelled save dialog')
     return
   }
 
-  console.log('[Export] Output path selected:', outputPath)
-
   // Build clip data for FFmpeg
-  const clips = timelineStore.clips.map((tc, index) => {
+  const clips = timelineStore.clips.map((tc) => {
     const sourceClip = clipStore.getClipById(tc.clipId)
-    console.log(`[Export] Timeline clip ${index}:`, {
-      name: tc.name,
-      sourceFilePath: sourceClip?.path,
-      trimStart: tc.trimStart,
-      trimEnd: tc.trimEnd,
-      duration: tc.duration
-    })
     return {
       sourceFilePath: sourceClip?.path || '',
       trimStart: tc.trimStart,
       trimEnd: tc.trimEnd,
       duration: tc.duration
     }
-  })
-
-  console.log('[Export] Invoking ffmpeg:exportTimeline with:', {
-    clipCount: clips.length,
-    outputPath,
-    quality: selectedQuality.value,
-    totalDuration: timelineStore.totalDuration
   })
 
   exportStore.startExport(`Exporting Timeline (${clips.length} clips)`, true)
@@ -152,7 +118,6 @@ const handleTimelineExport = async () => {
       totalDuration: timelineStore.totalDuration
     })
 
-    console.log('[Export] Timeline export successful:', result)
     exportStore.completeExport(outputPath)
   } catch (error: any) {
     console.error('[Export] Timeline export failed:', error)

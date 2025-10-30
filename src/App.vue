@@ -56,9 +56,7 @@ watch([() => exportStore.exportProgress, () => exportStore.lastExportPath, () =>
   
   // When export completes (100%, has output path, and not exporting), auto-dismiss after 5 seconds
   if (progress === 100 && lastPath && !isExporting) {
-    console.log('[App] Export complete, starting 5s auto-dismiss timer')
     autoDismissTimer = setTimeout(() => {
-      console.log('[App] Auto-dismissing export notification')
       exportStore.resetExport()
     }, 5000) // 5 seconds
   }

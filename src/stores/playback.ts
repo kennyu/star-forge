@@ -70,7 +70,6 @@ export const usePlaybackStore = defineStore('playback', () => {
    */
   function play() {
     if (timelineStore.clips.length === 0) {
-      console.warn('[Playback] Cannot play: no clips in timeline')
       return
     }
     
@@ -78,7 +77,6 @@ export const usePlaybackStore = defineStore('playback', () => {
     const clipIndex = findClipIndexAtTime(currentTime.value)
     
     if (clipIndex === -1) {
-      console.warn('[Playback] No clip at current playhead position')
       return
     }
     
@@ -92,7 +90,6 @@ export const usePlaybackStore = defineStore('playback', () => {
    * Pause timeline playback
    */
   function pause() {
-    console.log('[Playback] Pause requested')
     isPlaying.value = false
   }
   
@@ -111,7 +108,6 @@ export const usePlaybackStore = defineStore('playback', () => {
    * Stop playback and reset
    */
   function stop() {
-    console.log('[Playback] Stop requested')
     isPlaying.value = false
     currentClipIndex.value = -1
     currentVideoSource.value = null
@@ -126,8 +122,6 @@ export const usePlaybackStore = defineStore('playback', () => {
    */
   function seekTo(time: number) {
     const clampedTime = Math.max(0, Math.min(time, timelineStore.totalDuration))
-    console.log('[Playback] Seek to:', clampedTime)
-    
     currentTime.value = clampedTime
     
     // If playing, update the current clip
@@ -168,7 +162,6 @@ export const usePlaybackStore = defineStore('playback', () => {
     
     // Check if we've reached the end of this clip
     if (videoTime >= currentVideoEndTime.value - 0.05) {
-      console.log('[Playback] Reached end of clip', currentClipIndex.value)
       advanceToNextClip()
     }
   }
@@ -214,11 +207,8 @@ export const usePlaybackStore = defineStore('playback', () => {
   function advanceToNextClip() {
     const nextIndex = currentClipIndex.value + 1
     
-    console.log('[Playback] Advancing to clip', nextIndex)
-    
     if (nextIndex >= timelineStore.clips.length) {
       // Reached end of timeline
-      console.log('[Playback] Reached end of timeline')
       stop()
       return
     }
@@ -274,7 +264,6 @@ export const usePlaybackStore = defineStore('playback', () => {
    * Reset all playback state
    */
   function reset() {
-    console.log('[Playback] Reset')
     isPlaying.value = false
     currentTime.value = 0
     currentClipIndex.value = -1

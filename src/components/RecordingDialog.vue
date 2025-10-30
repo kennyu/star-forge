@@ -34,41 +34,27 @@ const showSourceSelector = computed(() => {
 
 // Load sources when dialog opens
 watch(() => props.open, async (isOpen) => {
-  console.log('[RecordingDialog] Dialog open state changed:', isOpen)
-  
   if (isOpen) {
-    console.log('[RecordingDialog] Dialog opened - loading sources')
     await loadSources()
   } else {
-    console.log('[RecordingDialog] Dialog closed')
     // Clean up when dialog closes
     if (!recordingStore.isRecording) {
-      console.log('[RecordingDialog] Stopping preview on dialog close')
       stopPreview()
     }
   }
 })
 
 async function loadSources() {
-  console.log('[RecordingDialog] loadSources called')
-  console.log('[RecordingDialog] Current mode:', recordingStore.mode)
-  
   if (recordingStore.mode === 'webcam') {
-    console.log('[RecordingDialog] Webcam mode - no sources needed')
     // No need to load sources for webcam only
     return
   }
 
   try {
     isLoadingSources.value = true
-    console.log('[RecordingDialog] Requesting sources from main process')
     const sources = await ipcRenderer.invoke('recording:getSources')
-    console.log('[RecordingDialog] Received sources:', sources)
-    console.log('[RecordingDialog] Number of sources:', sources.length)
     
     recordingStore.setAvailableScreenSources(sources)
-    console.log('[RecordingDialog] Sources loaded successfully')
-    console.log('[RecordingDialog] Selected source ID:', recordingStore.selectedScreenSourceId)
   } catch (error: any) {
     console.error('[RecordingDialog] Failed to load sources:', error)
     console.error('[RecordingDialog] Error stack:', error.stack)
@@ -91,19 +77,12 @@ function handleModeChange(mode: 'screen' | 'webcam' | 'screen-pip') {
 
 // Start preview
 async function startPreview() {
-  console.log('[RecordingDialog] startPreview called')
-  console.log('[RecordingDialog] Current mode:', recordingStore.mode)
-  console.log('[RecordingDialog] Selected source:', recordingStore.selectedScreenSourceId)
-  
   try {
     // Clean up any existing preview first (before setting state)
-    console.log('[RecordingDialog] Cleaning up existing streams')
     recordingStore.stopAllStreams()
     
     // Now set state to previewing (this will make the video element render)
     recordingStore.setState('previewing')
-
-    console.log('[RecordingDialog] Starting preview for mode:', recordingStore.mode)
 
     if (recordingStore.mode === 'webcam') {
       await startWebcamPreview()
@@ -113,21 +92,13 @@ async function startPreview() {
       await startPiPPreview()
     }
 
-    console.log('[RecordingDialog] Preview stream created:', recordingStore.previewStream)
-    console.log('[RecordingDialog] Preview stream tracks:', recordingStore.previewStream?.getTracks())
-    console.log('[RecordingDialog] isPreviewing:', recordingStore.isPreviewing)
-    console.log('[RecordingDialog] State:', recordingStore.state)
-
     // Attach preview stream to video element
     // Wait for DOM to update with v-if condition
     await nextTick()
-    console.log('[RecordingDialog] After first nextTick - Video element ref:', previewVideoRef.value)
     
     // Sometimes need to wait an additional tick for v-if elements
     if (!previewVideoRef.value) {
-      console.log('[RecordingDialog] Video ref not ready, waiting another tick...')
       await nextTick()
-      console.log('[RecordingDialog] After second nextTick - Video element ref:', previewVideoRef.value)
     }
     
     if (!previewVideoRef.value) {
@@ -142,7 +113,6 @@ async function startPreview() {
     }
     
     if (previewVideoRef.value && recordingStore.previewStream) {
-      console.log('[RecordingDialog] Attaching stream to video element')
       previewVideoRef.value.srcObject = recordingStore.previewStream
       
       // Don't use autoplay for canvas streams, play manually after a small delay
@@ -155,12 +125,10 @@ async function startPreview() {
           throw new Error('Video element not in document')
         }
         
-        console.log('[RecordingDialog] Attempting to play video')
         const playPromise = previewVideoRef.value.play()
         
         if (playPromise !== undefined) {
           await playPromise
-          console.log('[RecordingDialog] Video playing successfully')
         }
       } catch (playError: any) {
         console.error('[RecordingDialog] Failed to play video:', playError)
@@ -186,7 +154,6 @@ async function startPreview() {
 }
 
 async function startWebcamPreview() {
-  console.log('[RecordingDialog] startWebcamPreview - requesting webcam access')
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
@@ -196,12 +163,8 @@ async function startWebcamPreview() {
       audio: false // We'll handle audio separately
     })
     
-    console.log('[RecordingDialog] Webcam stream obtained:', stream)
-    console.log('[RecordingDialog] Webcam video tracks:', stream.getVideoTracks())
-    
     recordingStore.setWebcamStream(stream)
     recordingStore.setPreviewStream(stream)
-    console.log('[RecordingDialog] Webcam preview setup complete')
   } catch (error: any) {
     console.error('[RecordingDialog] Webcam access failed:', error)
     throw new Error('Failed to access webcam: ' + error.message)
@@ -209,17 +172,12 @@ async function startWebcamPreview() {
 }
 
 async function startScreenPreview() {
-  console.log('[RecordingDialog] startScreenPreview called')
-  console.log('[RecordingDialog] Selected source ID:', recordingStore.selectedScreenSourceId)
-  
   if (!recordingStore.selectedScreenSourceId) {
     console.error('[RecordingDialog] No screen source selected')
     throw new Error('No screen source selected')
   }
 
   try {
-    console.log('[RecordingDialog] Requesting screen capture with source:', recordingStore.selectedScreenSourceId)
-    
     const constraints = {
       audio: false,
       video: {
@@ -230,16 +188,10 @@ async function startScreenPreview() {
       }
     }
     
-    console.log('[RecordingDialog] Screen constraints:', JSON.stringify(constraints, null, 2))
-    
     const stream = await (navigator.mediaDevices as any).getUserMedia(constraints)
-
-    console.log('[RecordingDialog] Screen stream obtained:', stream)
-    console.log('[RecordingDialog] Screen video tracks:', stream.getVideoTracks())
     
     recordingStore.setScreenStream(stream)
     recordingStore.setPreviewStream(stream)
-    console.log('[RecordingDialog] Screen preview setup complete')
   } catch (error: any) {
     console.error('[RecordingDialog] Screen capture failed:', error)
     console.error('[RecordingDialog] Error name:', error.name)
@@ -249,8 +201,6 @@ async function startScreenPreview() {
 }
 
 async function startPiPPreview() {
-  console.log('[RecordingDialog] startPiPPreview called')
-  
   if (!recordingStore.selectedScreenSourceId) {
     console.error('[RecordingDialog] No screen source selected for PiP')
     throw new Error('No screen source selected')
@@ -258,7 +208,6 @@ async function startPiPPreview() {
 
   try {
     // Get screen stream
-    console.log('[RecordingDialog] PiP - Getting screen stream')
     const screenStream = await (navigator.mediaDevices as any).getUserMedia({
       audio: false,
       video: {
@@ -268,10 +217,8 @@ async function startPiPPreview() {
         }
       }
     })
-    console.log('[RecordingDialog] PiP - Screen stream obtained:', screenStream)
 
     // Get webcam stream with lower resolution for better performance
-    console.log('[RecordingDialog] PiP - Getting webcam stream')
     const webcamStream = await navigator.mediaDevices.getUserMedia({
       video: {
         width: { ideal: 320, max: 480 },
@@ -280,14 +227,12 @@ async function startPiPPreview() {
       },
       audio: false
     })
-    console.log('[RecordingDialog] PiP - Webcam stream obtained:', webcamStream)
 
     recordingStore.setScreenStream(screenStream)
     recordingStore.setWebcamStream(webcamStream)
 
     // Set up canvas for compositing
     await nextTick()
-    console.log('[RecordingDialog] PiP - Canvas ref:', canvasRef.value)
     
     if (!canvasRef.value) {
       console.error('[RecordingDialog] Canvas element not ready')
@@ -298,12 +243,9 @@ async function startPiPPreview() {
     recordingStore.setCompositeCanvas(canvas)
 
     // Start compositing
-    console.log('[RecordingDialog] PiP - Starting canvas compositing')
     const compositeStream = await startCanvasCompositing(screenStream, webcamStream, canvas)
-    console.log('[RecordingDialog] PiP - Composite stream created:', compositeStream)
     
     recordingStore.setPreviewStream(compositeStream)
-    console.log('[RecordingDialog] PiP preview setup complete')
   } catch (error: any) {
     console.error('[RecordingDialog] PiP preview failed:', error)
     throw new Error('Failed to start PiP preview: ' + error.message)
@@ -315,8 +257,6 @@ async function startCanvasCompositing(
   webcamStream: MediaStream,
   canvas: HTMLCanvasElement
 ): Promise<MediaStream> {
-  console.log('[RecordingDialog] startCanvasCompositing called')
-  
   const ctx = canvas.getContext('2d', { 
     alpha: false, 
     desynchronized: true,
@@ -330,8 +270,6 @@ async function startCanvasCompositing(
   // Optimize canvas rendering
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'low' // Trade quality for performance
-  
-  console.log('[RecordingDialog] Canvas context obtained with performance optimizations')
 
   // Create video elements for both streams
   const screenVideo = document.createElement('video')
@@ -342,25 +280,20 @@ async function startCanvasCompositing(
   screenVideo.muted = true
   webcamVideo.muted = true
 
-  console.log('[RecordingDialog] Playing screen video')
   await screenVideo.play()
-  console.log('[RecordingDialog] Playing webcam video')
   await webcamVideo.play()
-  console.log('[RecordingDialog] Both videos playing')
 
   // Set canvas size based on screen stream
   const screenTrack = screenStream.getVideoTracks()[0]
   const settings = screenTrack.getSettings()
   canvas.width = settings.width || 1920
   canvas.height = settings.height || 1080
-  console.log('[RecordingDialog] Canvas size set to:', canvas.width, 'x', canvas.height)
 
   // Calculate PiP position (bottom-right, 15% of screen width for better performance)
   const pipWidth = canvas.width * 0.15
   const pipHeight = pipWidth * (3 / 4) // Force 4:3 aspect ratio for consistency
   const pipX = canvas.width - pipWidth - 20
   const pipY = canvas.height - pipHeight - 20
-  console.log('[RecordingDialog] PiP overlay position:', { pipX, pipY, pipWidth, pipHeight })
 
   // Render loop - optimized for performance
   let frameCount = 0
@@ -374,7 +307,6 @@ async function startCanvasCompositing(
     
     if (!shouldContinue || !isRenderLoopActive) {
       // Cleanup if preview/recording stopped
-      console.log('[RecordingDialog] Stopping canvas render loop')
       screenVideo.pause()
       webcamVideo.pause()
       isRenderLoopActive = false
@@ -411,55 +343,37 @@ async function startCanvasCompositing(
       ctx.drawImage(webcamVideo, pipX, pipY, pipWidth, pipHeight)
     }
 
-    // Log every 60 frames (once every 2 seconds) to reduce console overhead
-    if (frameCount % 60 === 0) {
-      console.log('[RecordingDialog] Canvas rendering - frame', frameCount)
-    }
     frameCount++
 
     const frameId = requestAnimationFrame(render)
     recordingStore.setCompositeAnimationFrame(frameId)
   }
 
-  console.log('[RecordingDialog] Starting render loop')
   render()
 
   // Capture canvas as stream
-  console.log('[RecordingDialog] Capturing canvas as stream at 30 FPS')
   const compositeStream = canvas.captureStream(30) // 30 FPS
-  console.log('[RecordingDialog] Composite stream captured:', compositeStream)
-  console.log('[RecordingDialog] Composite stream tracks:', compositeStream.getTracks())
   
   return compositeStream
 }
 
 function stopPreview() {
-  console.log('[RecordingDialog] stopPreview called')
-  console.log('[RecordingDialog] Current state:', recordingStore.state)
-  
   recordingStore.stopAllStreams()
   
   if (previewVideoRef.value) {
-    console.log('[RecordingDialog] Clearing video srcObject')
     previewVideoRef.value.srcObject = null
   }
 
   if (recordingStore.state === 'previewing') {
-    console.log('[RecordingDialog] Setting state to idle')
     recordingStore.setState('idle')
   }
-  
-  console.log('[RecordingDialog] stopPreview complete')
 }
 
 // Start recording
 async function startRecording() {
-  console.log('[RecordingDialog] startRecording called')
-  
   try {
     recordingStore.setState('recording')
     recordingStore.clearRecordedChunks()
-    console.log('[RecordingDialog] Recording state set, chunks cleared')
 
     // Get the video stream (from preview)
     let videoStream = recordingStore.previewStream
@@ -469,19 +383,14 @@ async function startRecording() {
       throw new Error('No video stream available')
     }
 
-    console.log('[RecordingDialog] Using video stream:', videoStream)
-    console.log('[RecordingDialog] Video tracks:', videoStream.getVideoTracks())
-
     // Get audio stream if needed
     let audioTracks: MediaStreamTrack[] = []
 
     if (recordingStore.audioSettings.microphone) {
       try {
-        console.log('[RecordingDialog] Requesting microphone access')
         const micStream = await navigator.mediaDevices.getUserMedia({ audio: true })
         audioTracks.push(...micStream.getAudioTracks())
         recordingStore.setAudioStream(micStream)
-        console.log('[RecordingDialog] Microphone tracks added:', micStream.getAudioTracks())
       } catch (error) {
         console.warn('[RecordingDialog] Failed to get microphone:', error)
       }
@@ -491,7 +400,6 @@ async function startRecording() {
       // System audio comes from screen stream
       const systemAudioTracks = recordingStore.screenStream.getAudioTracks()
       audioTracks.push(...systemAudioTracks)
-      console.log('[RecordingDialog] System audio tracks added:', systemAudioTracks)
     }
 
     // Combine video and audio tracks
@@ -500,7 +408,6 @@ async function startRecording() {
       ...audioTracks
     ])
 
-    console.log('[RecordingDialog] Recording stream created with tracks:', recordingStream.getTracks())
     recordingStore.setRecordingStream(recordingStream)
 
     // Create MediaRecorder with compatible codec settings
@@ -509,7 +416,6 @@ async function startRecording() {
     
     // Try VP8 first (better compatibility)
     if (MediaRecorder.isTypeSupported(mimeType)) {
-      console.log('[RecordingDialog] Using VP8 codec for maximum compatibility')
       mediaRecorder = new MediaRecorder(recordingStream, { 
         mimeType,
         videoBitsPerSecond: 2500000 // 2.5 Mbps
@@ -523,20 +429,13 @@ async function startRecording() {
       })
     }
 
-    console.log('[RecordingDialog] MediaRecorder created with mimeType:', mimeType)
-    console.log('[RecordingDialog] MediaRecorder state:', mediaRecorder.state)
-
     mediaRecorder.ondataavailable = (event) => {
-      console.log('[RecordingDialog] Data available event:', event.data.size, 'bytes')
       if (event.data && event.data.size > 0) {
         recordingStore.addRecordedChunk(event.data)
-        console.log('[RecordingDialog] Chunk added. Total chunks:', recordingStore.recordedChunks.length)
       }
     }
 
     mediaRecorder.onstop = async () => {
-      console.log('[RecordingDialog] MediaRecorder stopped')
-      console.log('[RecordingDialog] Total chunks collected:', recordingStore.recordedChunks.length)
       await processRecording()
     }
 
@@ -545,19 +444,12 @@ async function startRecording() {
       recordingStore.setError('Recording error: ' + event.error)
     }
 
-    mediaRecorder.onstart = () => {
-      console.log('[RecordingDialog] MediaRecorder started')
-    }
-
     recordingStore.setMediaRecorder(mediaRecorder)
     
-    console.log('[RecordingDialog] Starting MediaRecorder with 1000ms timeslice')
     mediaRecorder.start(1000) // Collect data every second
 
     // Start timer
     recordingStore.startRecordingTimer()
-
-    console.log('[RecordingDialog] Recording started successfully')
   } catch (error: any) {
     console.error('[RecordingDialog] Failed to start recording:', error)
     console.error('[RecordingDialog] Error stack:', error.stack)
@@ -568,18 +460,13 @@ async function startRecording() {
 
 // Stop recording
 function stopRecording() {
-  console.log('[RecordingDialog] Stopping recording...')
-  console.log('[RecordingDialog] MediaRecorder state:', recordingStore.mediaRecorder?.state)
-  
   if (recordingStore.mediaRecorder && recordingStore.mediaRecorder.state !== 'inactive') {
-    console.log('[RecordingDialog] Calling mediaRecorder.stop()')
     recordingStore.mediaRecorder.stop()
   } else {
     console.warn('[RecordingDialog] MediaRecorder not active or missing')
   }
 
   recordingStore.stopRecordingTimer()
-  console.log('[RecordingDialog] Recording timer stopped')
 }
 
 // Process recorded data
@@ -591,24 +478,17 @@ async function processRecording() {
     if (chunks.length === 0) {
       throw new Error('No recorded data')
     }
-
-    console.log('[Recording] Processing', chunks.length, 'chunks')
     
     // Create blob from chunks
     const originalBlob = new Blob(chunks, { type: 'video/webm' })
-    console.log('[Recording] Original blob size:', originalBlob.size, 'bytes')
     
     // Fix WebM duration metadata using the elapsed recording time
     const recordingDurationMs = recordingStore.elapsedTime * 1000 // Convert seconds to milliseconds
-    console.log('[Recording] Fixing WebM duration metadata. Elapsed time:', recordingDurationMs, 'ms')
     
     const fixedBlob = await fixWebmDuration(originalBlob, recordingDurationMs, { logger: false })
-    console.log('[Recording] Fixed blob size:', fixedBlob.size, 'bytes')
     
     const arrayBuffer = await fixedBlob.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
-
-    console.log('[Recording] Buffer size:', buffer.length, 'bytes')
 
     // Generate filename
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
@@ -622,7 +502,6 @@ async function processRecording() {
     })
 
     if (result.canceled) {
-      console.log('[Recording] Save cancelled by user')
       recordingStore.setState('idle')
       return
     }
@@ -630,8 +509,6 @@ async function processRecording() {
     if (!result.success) {
       throw new Error('Failed to save recording')
     }
-
-    console.log('[Recording] Recording saved:', result.filePath)
 
     // Add to media library
     const clip = {
@@ -645,7 +522,6 @@ async function processRecording() {
     }
 
     clipStore.addClip(clip)
-    console.log('[Recording] Added to media library:', clip)
 
     recordingStore.setState('completed')
 

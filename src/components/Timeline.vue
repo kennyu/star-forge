@@ -165,8 +165,6 @@ async function generateThumbnails(
           onProgress(thumbnails[thumbnails.length - 1], i, [...thumbnails])
         }
       } catch (frameError) {
-        console.warn('[Timeline] Failed to capture thumbnail frame:', frameError)
-
         // Attempt a single fallback frame if nothing has been captured yet
         if (thumbnails.length === 0 && i === 0) {
           try {
@@ -567,7 +565,6 @@ const splitClipAtPlayhead = () => {
   )
   
   if (!clipToSplit) {
-    console.warn('[Timeline] No clip at playhead position')
     return
   }
   
@@ -576,7 +573,6 @@ const splitClipAtPlayhead = () => {
   
   // Can't split at the very start or end
   if (splitTimeInClip <= MIN_SPLIT_DISTANCE || splitTimeInClip >= clipToSplit.duration - MIN_SPLIT_DISTANCE) {
-    console.warn('[Timeline] Cannot split at clip edges')
     return
   }
   

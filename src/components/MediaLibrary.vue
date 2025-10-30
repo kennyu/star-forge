@@ -15,8 +15,6 @@ const selectedClip = computed(() => {
 const showMetadata = ref(false)
 
 const formatDuration = (seconds: number) => {
-  console.log('[MediaLibrary] formatDuration called with:', seconds, 'type:', typeof seconds)
-  
   // Handle invalid values
   if (seconds == null || isNaN(seconds) || !isFinite(seconds) || seconds <= 0) {
     console.warn('[MediaLibrary] Invalid duration value:', seconds)
@@ -63,14 +61,12 @@ const showInFolder = (clipId: string) => {
   
   const { shell } = window.require('electron')
   shell.showItemInFolder(clip.path)
-  console.log('[MediaLibrary] Showing file in folder:', clip.path)
 }
 
 // Copy functions
 const copyToClipboard = async (text: string) => {
   try {
     await navigator.clipboard.writeText(text)
-    console.log('Copied to clipboard:', text)
   } catch (err) {
     console.error('Failed to copy:', err)
   }

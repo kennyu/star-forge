@@ -30,10 +30,6 @@ const videoRef = ref<HTMLVideoElement | null>(null)
 const player = ref<Player | null>(null)
 const volume = ref(100)
 
-// Local UI state (for display only)
-const currentTime = ref(0)
-const duration = ref(0)
-
 // Check if we should show the video player
 const shouldShowPlayer = computed(() => {
   return timelineStore.clips.length > 0
@@ -45,8 +41,6 @@ const shouldShowPlayer = computed(() => {
 
 function initializePlayer() {
   if (!videoRef.value || player.value) return
-  
-  console.log('[VideoPlayer] Initializing player with performance optimizations')
   
   // Enable hardware acceleration attributes on video element
   videoRef.value.setAttribute('playsinline', '')
@@ -70,15 +64,12 @@ function initializePlayer() {
       },
     },
   })
-  
-  console.log('[VideoPlayer] Hardware acceleration enabled')
 
   // Listen to player events and report to playback store
   player.value.on('timeupdate', () => {
     if (!player.value) return
     
     const time = player.value.currentTime() || 0
-    currentTime.value = time
     
     // Report time to playback store (it will handle clip transitions)
     if (playbackStore.isPlaying) {
@@ -86,28 +77,18 @@ function initializePlayer() {
     }
   })
 
-  player.value.on('loadedmetadata', () => {
-    if (player.value) {
-      duration.value = player.value.duration() || 0
-    }
-  })
-
   player.value.on('ended', () => {
-    console.log('[VideoPlayer] Video ended')
     // Playback store will handle advancing to next clip via updateTime
   })
 
   player.value.on('error', (error: any) => {
     console.error('[VideoPlayer] Playback error:', error)
   })
-  
-  console.log('[VideoPlayer] Player initialized')
 }
 
 // Initialize player when clips are added (or on mount if clips already exist)
 watch(shouldShowPlayer, async (shouldShow) => {
   if (shouldShow && !player.value) {
-    console.log('[VideoPlayer] shouldShowPlayer changed to true, initializing...')
     // Wait for DOM to render video element
     await nextTick()
     initializePlayer()
@@ -123,7 +104,6 @@ watch(() => playbackStore.isPlaying, async (playing) => {
   // If player not initialized yet, wait for it
   if (!player.value) {
     if (shouldShowPlayer.value) {
-      console.log('[VideoPlayer] Player not ready, waiting for initialization...')
       // Wait for the video element to render and player to initialize
       await nextTick()
       // Give initialization time to complete
@@ -138,19 +118,15 @@ watch(() => playbackStore.isPlaying, async (playing) => {
         playbackStore.pause() // Reset state
         return
       }
-      console.log('[VideoPlayer] Player initialized after waiting')
     } else {
-      console.warn('[VideoPlayer] Cannot respond to play command: no clips in timeline')
       playbackStore.pause() // Reset state
       return
     }
   }
   
   if (playing) {
-    console.log('[VideoPlayer] Play command received')
     await loadAndPlayCurrentClip()
   } else {
-    console.log('[VideoPlayer] Pause command received')
     player.value.pause()
   }
 })
@@ -159,7 +135,6 @@ watch(() => playbackStore.isPlaying, async (playing) => {
 watch(() => playbackStore.currentClipIndex, async (newIndex, oldIndex) => {
   if (newIndex === -1 || newIndex === oldIndex || !playbackStore.isPlaying) return
   
-  console.log('[VideoPlayer] Clip changed from', oldIndex, 'to', newIndex)
   await loadAndPlayCurrentClip()
 })
 
@@ -280,11 +255,6 @@ const skipForward = () => {
   playbackStore.seekTo(newTime)
 }
 
-const handleSeek = (value: number) => {
-  if (!player.value) return
-  player.value.currentTime(value)
-}
-
 const handleVolumeChange = (value: number) => {
   if (!player.value) return
   volume.value = value
@@ -368,23 +338,6 @@ onBeforeUnmount(() => {
 
     <!-- Controls -->
     <div v-if="shouldShowPlayer" class="space-y-3">
-      <!-- Timeline/Seek Bar -->
-      <div class="flex items-center gap-3">
-        <span class="text-sm text-muted-foreground w-12 text-right">
-          {{ formatTime(currentTime) }}
-        </span>
-        <Slider
-          :model-value="currentTime"
-          :max="duration || 100"
-          :step="0.1"
-          @update:model-value="handleSeek"
-          class="flex-1"
-        />
-        <span class="text-sm text-muted-foreground w-12">
-          {{ formatTime(duration) }}
-        </span>
-      </div>
-
       <!-- Playback Controls -->
       <div class="flex items-center justify-center gap-2">
         <Button

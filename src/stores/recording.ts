@@ -102,16 +102,10 @@ export const useRecordingStore = defineStore('recording', () => {
   }
 
   function setState(newState: RecordingState) {
-    console.log('[RecordingStore] setState called:', state.value, '->', newState)
     state.value = newState
-    console.log('[RecordingStore] State updated. isPreviewing:', isPreviewing.value, 'isRecording:', isRecording.value)
   }
 
   function setPreviewStream(stream: MediaStream | null) {
-    console.log('[RecordingStore] setPreviewStream called with:', stream)
-    if (stream) {
-      console.log('[RecordingStore] Stream tracks:', stream.getTracks())
-    }
     previewStream.value = stream
   }
 
