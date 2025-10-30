@@ -6,6 +6,15 @@ import { useTimelineStore, type TimelineClip } from '@/stores/timeline'
 import { useClipStore } from '@/stores/clips'
 import { usePlaybackStore } from '@/stores/playback'
 
+// Constants
+const THUMBNAIL_WIDTH = 160
+const THUMBNAIL_HEIGHT = 90
+const THUMBNAIL_INTERVAL = 0.1 // seconds between thumbnails
+const PIXELS_PER_SECOND_BASE = 100
+const TIME_MARKER_INTERVAL = 5 // seconds
+const MIN_SPLIT_DISTANCE = 0.1 // seconds from edge
+const DRAG_THRESHOLD = 5 // pixels
+
 const timelineStore = useTimelineStore()
 const clipStore = useClipStore()
 const playbackStore = usePlaybackStore()
@@ -19,7 +28,7 @@ const isDraggingOver = ref(false)
 const isDraggingClip = ref(false)
 const draggedClipId = ref<string | null>(null)
 const dropTargetIndex = ref<number | null>(null)
-const pixelsPerSecond = computed(() => 100 * timelineStore.zoom)
+const pixelsPerSecond = computed(() => PIXELS_PER_SECOND_BASE * timelineStore.zoom)
 const timelineWidth = computed(() => Math.max(1000, timelineStore.totalDuration * pixelsPerSecond.value))
 
 // Timeline scrolling state
@@ -28,6 +37,13 @@ const isDraggingTimeline = ref(false)
 const dragStartX = ref(0)
 const dragStartScrollLeft = ref(0)
 const timelineContainerRef = ref<HTMLElement | null>(null)
+
+// Hover thumbnail preview state
+const isHoveringTimeline = ref(false)
+const hoverTime = ref(0)
+const hoverThumbnail = ref<string | null>(null)
+const hoverX = ref(0)
+const hoverY = ref(0)
 
 // Timeline padding (half viewport width on each side)
 const timelinePadding = computed(() => {
@@ -50,10 +66,8 @@ async function generateThumbnails(videoPath: string, duration: number): Promise<
   }
 
   // Use a consistent thumbnail resolution
-  const thumbnailWidth = 160
-  const thumbnailHeight = 90
-  canvas.width = thumbnailWidth
-  canvas.height = thumbnailHeight
+  canvas.width = THUMBNAIL_WIDTH
+  canvas.height = THUMBNAIL_HEIGHT
 
   // Helper to load metadata
   const waitForMetadata = () => new Promise<void>((resolve, reject) => {
@@ -86,7 +100,7 @@ async function generateThumbnails(videoPath: string, duration: number): Promise<
         video.removeEventListener('error', handleError)
 
         try {
-          ctx.drawImage(video, 0, 0, thumbnailWidth, thumbnailHeight)
+          ctx.drawImage(video, 0, 0, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT)
           thumbnails.push(canvas.toDataURL('image/jpeg', 0.7))
           resolve()
         } catch (frameError) {
@@ -131,7 +145,7 @@ async function generateThumbnails(videoPath: string, duration: number): Promise<
     actualDuration = metadataDuration ?? (Number.isFinite(duration) && duration > 0 ? duration : 1)
 
     // Determine how many frames to capture based on clip length
-    const frameCount = Math.min(12, Math.max(1, Math.round(actualDuration / 2)))
+    const frameCount = Math.max(1, Math.round(actualDuration / THUMBNAIL_INTERVAL))
     const segmentLength = actualDuration / frameCount
 
     for (let i = 0; i < frameCount; i++) {
@@ -162,6 +176,42 @@ async function generateThumbnails(videoPath: string, duration: number): Promise<
   }
 
   return thumbnails
+}
+
+// Helper: Generate unique clip ID
+const generateClipId = () => `timeline-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+
+// Helper: Split thumbnail frames proportionally
+const splitThumbnailFrames = (
+  originalFrames: string[], 
+  splitRatio: number
+): [string[], string[]] => {
+  if (originalFrames.length === 0) return [[], []]
+  
+  const totalFrames = originalFrames.length
+  let clip1Count = Math.max(1, Math.round(totalFrames * splitRatio))
+  clip1Count = Math.min(clip1Count, totalFrames)
+  
+  let clip2Count = totalFrames - clip1Count
+  
+  // Ensure both clips have at least one frame if possible
+  if (clip2Count === 0 && totalFrames > 1) {
+    clip2Count = 1
+    clip1Count = totalFrames - 1
+  }
+  
+  let clip1Frames = originalFrames.slice(0, clip1Count)
+  let clip2Frames = originalFrames.slice(clip1Count)
+  
+  // Fallback: ensure both have at least one frame
+  if (clip1Frames.length === 0 && clip2Frames.length > 0) {
+    clip1Frames = [clip2Frames[0]]
+  }
+  if (clip2Frames.length === 0 && clip1Frames.length > 0) {
+    clip2Frames = [clip1Frames[clip1Frames.length - 1]]
+  }
+  
+  return [clip1Frames, clip2Frames]
 }
 
 // Handle drag and drop from media library
@@ -217,7 +267,7 @@ const handleDrop = async (e: DragEvent) => {
 
     // Create timeline clip
     const timelineClip: TimelineClip = {
-      id: `timeline-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: generateClipId(),
       clipId: clip.id,
       name: clip.name,
       startTime: startTime,
@@ -334,8 +384,6 @@ const getClipStyle = (clip: TimelineClip) => {
 watch(() => playbackStore.currentTime, (newTime) => {
   if (!timelineContainerRef.value) return
   
-  console.log('[Timeline] Playhead changed to:', newTime.toFixed(2))
-  
   // Calculate scroll position to center the playhead at this time
   const containerWidth = timelineContainerRef.value.clientWidth
   const timePosition = newTime * pixelsPerSecond.value
@@ -358,7 +406,6 @@ const updatePlayheadFromScroll = () => {
   const centerPosition = timelineScrollLeft.value + (containerWidth / 2) - timelinePadding.value
   const newTime = Math.max(0, centerPosition / pixelsPerSecond.value)
   
-  console.log('[Timeline] User scrolled, updating playhead to:', newTime.toFixed(2))
   playbackStore.seekTo(newTime)
 }
 
@@ -416,8 +463,8 @@ const handleTimelineClick = () => {
 
 // Click on time ruler to seek
 const handleTimeRulerClick = (e: MouseEvent) => {
-  // Don't seek if user was dragging (moved more than 5px)
-  if (timelineDragDistance.value > 5) {
+  // Don't seek if user was dragging
+  if (timelineDragDistance.value > DRAG_THRESHOLD) {
     timelineDragDistance.value = 0
     return
   }
@@ -425,35 +472,59 @@ const handleTimeRulerClick = (e: MouseEvent) => {
   if (!timelineContainerRef.value) return
   
   const rect = timelineContainerRef.value.getBoundingClientRect()
-  
-  // Calculate absolute position in timeline (accounting for padding and scroll)
   const clickX = e.clientX - rect.left + timelineScrollLeft.value - timelinePadding.value
-  
-  // Convert to time
   const newTime = Math.max(0, clickX / pixelsPerSecond.value)
   
-  console.log('[Timeline] Time ruler clicked at:', newTime.toFixed(2))
-  
-  // Seek to the clicked time
   playbackStore.seekTo(newTime)
-  
   timelineDragDistance.value = 0
+}
+
+// Handle hover thumbnail preview
+const handleTimelineHover = (e: MouseEvent) => {
+  if (!timelineContainerRef.value) return
+  
+  const rect = timelineContainerRef.value.getBoundingClientRect()
+  const mouseX = e.clientX - rect.left + timelineScrollLeft.value - timelinePadding.value
+  const time = Math.max(0, mouseX / pixelsPerSecond.value)
+  
+  hoverTime.value = time
+  hoverX.value = e.clientX
+  hoverY.value = rect.top
+  
+  // Find clip at this time
+  const clip = timelineStore.clips.find(c => 
+    time >= c.startTime && time < c.startTime + c.duration
+  )
+  
+  if (clip && clip.thumbnailFrames && clip.thumbnailFrames.length > 0) {
+    // Calculate relative position within clip
+    const timeInClip = time - clip.startTime
+    const progress = timeInClip / clip.duration
+    const frameIndex = Math.floor(progress * clip.thumbnailFrames.length)
+    const clampedIndex = Math.min(frameIndex, clip.thumbnailFrames.length - 1)
+    
+    hoverThumbnail.value = clip.thumbnailFrames[clampedIndex]
+  } else {
+    hoverThumbnail.value = null
+  }
+}
+
+const handleTimelineMouseEnter = () => {
+  isHoveringTimeline.value = true
+}
+
+const handleTimelineMouseLeave = () => {
+  isHoveringTimeline.value = false
+  hoverThumbnail.value = null
 }
 
 // Toggle timeline playback
 const toggleTimelinePlayback = () => {
-  console.log('[Timeline] toggleTimelinePlayback called')
-  console.log('[Timeline] Current isPlaying:', playbackStore.isPlaying)
-  console.log('[Timeline] Current playhead time:', playbackStore.currentTime)
-  console.log('[Timeline] Timeline clips:', timelineStore.clips.length)
-  
   playbackStore.togglePlayPause()
-  
-  console.log('[Timeline] After toggle, isPlaying:', playbackStore.isPlaying)
 }
 
 // Split clip at playhead
-const splitClipAtPlayhead = async () => {
+const splitClipAtPlayhead = () => {
   const currentTime = playbackStore.currentTime
   
   // Find clip that contains the playhead
@@ -462,7 +533,7 @@ const splitClipAtPlayhead = async () => {
   )
   
   if (!clipToSplit) {
-    console.log('No clip at playhead position')
+    console.warn('[Timeline] No clip at playhead position')
     return
   }
   
@@ -470,55 +541,26 @@ const splitClipAtPlayhead = async () => {
   const splitTimeInClip = currentTime - clipToSplit.startTime
   
   // Can't split at the very start or end
-  if (splitTimeInClip <= 0.1 || splitTimeInClip >= clipToSplit.duration - 0.1) {
-    console.log('Cannot split at clip edges')
+  if (splitTimeInClip <= MIN_SPLIT_DISTANCE || splitTimeInClip >= clipToSplit.duration - MIN_SPLIT_DISTANCE) {
+    console.warn('[Timeline] Cannot split at clip edges')
     return
   }
   
-  // Get the source clip from media library
-  const sourceClip = clipStore.getClipById(clipToSplit.clipId)
-  if (!sourceClip) return
-  
-  // Create two new clips
   const clip1Duration = splitTimeInClip
   const clip2Duration = clipToSplit.duration - splitTimeInClip
+  const splitRatio = clip1Duration / clipToSplit.duration
 
-  // Split existing thumbnails proportionally between the new clips
-  const originalFrames = clipToSplit.thumbnailFrames ?? []
-  let clip1Frames: string[] | undefined
-  let clip2Frames: string[] | undefined
-
-  if (originalFrames.length > 0) {
-    const totalFrames = originalFrames.length
-    const clip1Ratio = clip1Duration / clipToSplit.duration
-
-    let clip1Count = Math.max(1, Math.round(totalFrames * clip1Ratio))
-    clip1Count = Math.min(clip1Count, totalFrames)
-
-    let clip2Count = totalFrames - clip1Count
-
-    if (clip2Count === 0 && totalFrames > 1) {
-      clip2Count = 1
-      clip1Count = Math.max(1, totalFrames - clip2Count)
-    }
-
-    clip1Frames = originalFrames.slice(0, clip1Count)
-    clip2Frames = originalFrames.slice(clip1Count)
-
-    if (clip1Frames.length === 0 && clip2Frames.length > 0) {
-      clip1Frames = [clip2Frames[0]]
-    }
-
-    if (clip2Frames.length === 0 && clip1Frames.length > 0) {
-      clip2Frames = [clip1Frames[clip1Frames.length - 1]]
-    }
-  }
-
-  const clip1Thumbnail = clip1Frames && clip1Frames.length > 0 ? clip1Frames[0] : clipToSplit.thumbnail
-  const clip2Thumbnail = clip2Frames && clip2Frames.length > 0 ? clip2Frames[0] : clipToSplit.thumbnail
+  // Split thumbnails proportionally
+  const [clip1Frames, clip2Frames] = splitThumbnailFrames(
+    clipToSplit.thumbnailFrames ?? [], 
+    splitRatio
+  )
+  
+  const clip1Thumbnail = clip1Frames[0] ?? clipToSplit.thumbnail
+  const clip2Thumbnail = clip2Frames[0] ?? clipToSplit.thumbnail
 
   const clip1: TimelineClip = {
-    id: `timeline-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    id: generateClipId(),
     clipId: clipToSplit.clipId,
     name: `${clipToSplit.name} (1)`,
     startTime: clipToSplit.startTime,
@@ -527,11 +569,11 @@ const splitClipAtPlayhead = async () => {
     trimEnd: clipToSplit.trimStart + clip1Duration,
     track: clipToSplit.track,
     thumbnail: clip1Thumbnail,
-    thumbnailFrames: clip1Frames
+    thumbnailFrames: clip1Frames.length > 0 ? clip1Frames : undefined
   }
 
   const clip2: TimelineClip = {
-    id: `timeline-${Date.now() + 1}-${Math.random().toString(36).substr(2, 9)}`,
+    id: generateClipId(),
     clipId: clipToSplit.clipId,
     name: `${clipToSplit.name} (2)`,
     startTime: clipToSplit.startTime + clip1Duration,
@@ -540,20 +582,14 @@ const splitClipAtPlayhead = async () => {
     trimEnd: clipToSplit.trimEnd,
     track: clipToSplit.track,
     thumbnail: clip2Thumbnail,
-    thumbnailFrames: clip2Frames
+    thumbnailFrames: clip2Frames.length > 0 ? clip2Frames : undefined
   }
   
-  // Remove original clip
+  // Remove original and add split clips
   timelineStore.removeClipFromTimeline(clipToSplit.id)
-  
-  // Add two new clips
   timelineStore.addClipToTimeline(clip1)
   timelineStore.addClipToTimeline(clip2)
-  
-  // Reorder to maintain sequence
   timelineStore.reorderClips()
-  
-  console.log(`Split clip at ${splitTimeInClip.toFixed(2)}s`)
 }
 </script>
 
@@ -668,6 +704,30 @@ const splitClipAtPlayhead = async () => {
         v-if="timelineStore.clips.length > 0"
         class="relative"
       >
+        <!-- Hover Thumbnail Preview -->
+        <div
+          v-if="isHoveringTimeline && hoverThumbnail"
+          class="fixed pointer-events-none z-[100]"
+          :style="{
+            left: `${hoverX}px`,
+            top: `${hoverY - 180}px`,
+            transform: 'translateX(-50%)'
+          }"
+        >
+          <div class="relative bg-black rounded-lg overflow-hidden shadow-2xl border-2 border-white/20">
+            <img 
+              :src="hoverThumbnail"
+              class="w-40 h-40 block object-cover"
+              alt="Preview"
+            />
+            <div class="absolute bottom-0 inset-x-0 bg-black/90 text-white text-xs px-2 py-1 text-center font-mono">
+              {{ formatTime(hoverTime) }}
+            </div>
+          </div>
+          <!-- Small arrow pointing down -->
+          <div class="absolute left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent border-t-white/20"></div>
+        </div>
+
         <!-- Fixed Playhead Indicator -->
         <div 
           class="absolute top-0 bottom-0 left-1/2 w-0.5 z-50 pointer-events-none transition-colors"
@@ -691,10 +751,11 @@ const splitClipAtPlayhead = async () => {
           ref="timelineContainerRef"
           class="relative overflow-x-auto cursor-grab active:cursor-grabbing"
           @mousedown="handleTimelineDragStart"
-          @mousemove="handleTimelineDragMove"
+          @mousemove="(e) => { handleTimelineDragMove(e); handleTimelineHover(e); }"
           @mouseup="handleTimelineDragEnd"
-          @mouseleave="handleTimelineDragEnd"
+          @mouseleave="() => { handleTimelineDragEnd(); handleTimelineMouseLeave(); }"
           @scroll="handleTimelineScroll"
+          @mouseenter="handleTimelineMouseEnter"
         >
         <div 
           :style="{ 
@@ -709,20 +770,23 @@ const splitClipAtPlayhead = async () => {
             @click="handleTimeRulerClick"
           >
             <div class="relative" :style="{ width: `${timelineWidth}px`, height: '100%' }">
-              <!-- Time markers every 5 seconds -->
+              <!-- Time markers -->
               <div
-                v-for="i in Math.max(0, Math.min(1000, Math.ceil(timelineStore.totalDuration / 5)))"
+                v-for="i in Math.max(0, Math.min(1000, Math.ceil(timelineStore.totalDuration / TIME_MARKER_INTERVAL)))"
                 :key="i"
-                :style="{ left: `${i * 5 * pixelsPerSecond}px` }"
+                :style="{ left: `${i * TIME_MARKER_INTERVAL * pixelsPerSecond}px` }"
                 class="absolute top-0 bottom-0 border-l border-border"
               >
-                <span class="text-xs text-muted-foreground ml-1">{{ formatTime(i * 5) }}</span>
+                <span class="text-xs text-muted-foreground ml-1">{{ formatTime(i * TIME_MARKER_INTERVAL) }}</span>
               </div>
             </div>
           </div>
 
           <!-- Clips Track -->
-          <div class="relative h-20" @click="handleTimelineClick">
+          <div 
+            class="relative h-20" 
+            @click="handleTimelineClick"
+          >
             <div :style="{ width: `${timelineWidth}px`, height: '100%' }" class="relative">
             <!-- Timeline Clips -->
             <div
