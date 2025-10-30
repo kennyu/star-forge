@@ -35,62 +35,133 @@ const timelinePadding = computed(() => {
   return timelineContainerRef.value.clientWidth / 2
 })
 
-// Generate thumbnail from video file
-async function generateThumbnail(videoPath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (!hiddenVideoRef.value || !hiddenCanvasRef.value) {
-      reject(new Error('Video or canvas ref not available'))
-      return
+// Generate a filmstrip of thumbnails from a video file
+async function generateThumbnails(videoPath: string, duration: number): Promise<string[]> {
+  if (!hiddenVideoRef.value || !hiddenCanvasRef.value) {
+    throw new Error('Video or canvas ref not available')
+  }
+
+  const video = hiddenVideoRef.value
+  const canvas = hiddenCanvasRef.value
+  const ctx = canvas.getContext('2d')
+
+  if (!ctx) {
+    throw new Error('Cannot get canvas context')
+  }
+
+  // Use a consistent thumbnail resolution
+  const thumbnailWidth = 160
+  const thumbnailHeight = 90
+  canvas.width = thumbnailWidth
+  canvas.height = thumbnailHeight
+
+  // Helper to load metadata
+  const waitForMetadata = () => new Promise<void>((resolve, reject) => {
+    const handleLoaded = () => {
+      cleanup()
+      resolve()
     }
-
-    const video = hiddenVideoRef.value
-    const canvas = hiddenCanvasRef.value
-    const ctx = canvas.getContext('2d')
-
-    if (!ctx) {
-      reject(new Error('Cannot get canvas context'))
-      return
-    }
-
-    // Set up video
-    video.src = `file://${videoPath}`
-    video.muted = true
-
     const handleError = () => {
-      reject(new Error('Failed to load video'))
+      cleanup()
+      reject(new Error('Failed to load video metadata'))
+    }
+    const cleanup = () => {
+      video.removeEventListener('loadedmetadata', handleLoaded)
+      video.removeEventListener('error', handleError)
     }
 
-    const handleSeeked = () => {
-      try {
-        // Draw video frame to canvas at 120x68 resolution
-        canvas.width = 120
-        canvas.height = 68
-        ctx.drawImage(video, 0, 0, 120, 68)
-        
-        // Convert to data URL
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.7)
-        
-        // Clean up
-        video.removeEventListener('error', handleError)
-        video.removeEventListener('seeked', handleSeeked)
-        video.src = ''
-        
-        resolve(dataUrl)
-      } catch (error) {
-        reject(error)
-      }
-    }
-
+    video.addEventListener('loadedmetadata', handleLoaded)
     video.addEventListener('error', handleError)
-    video.addEventListener('seeked', handleSeeked, { once: true })
-
-    // Load and seek to 0.5 seconds
-    video.addEventListener('loadedmetadata', () => {
-      video.currentTime = 0.5
-    }, { once: true })
-
     video.load()
   })
+
+  // Determine an initial duration guess until metadata is available
+  let actualDuration = Number.isFinite(duration) && duration > 0 ? duration : 1
+
+  // Helper to seek to a given time and capture the frame
+  const captureFrame = async (time: number, thumbnails: string[]) => {
+    await new Promise<void>((resolve, reject) => {
+      const handleSeeked = () => {
+        video.removeEventListener('seeked', handleSeeked)
+        video.removeEventListener('error', handleError)
+
+        try {
+          ctx.drawImage(video, 0, 0, thumbnailWidth, thumbnailHeight)
+          thumbnails.push(canvas.toDataURL('image/jpeg', 0.7))
+          resolve()
+        } catch (frameError) {
+          reject(frameError)
+        }
+      }
+
+      const handleError = () => {
+        video.removeEventListener('seeked', handleSeeked)
+        video.removeEventListener('error', handleError)
+        reject(new Error('Failed to capture frame from video'))
+      }
+
+      video.addEventListener('seeked', handleSeeked, { once: true })
+      video.addEventListener('error', handleError, { once: true })
+
+      const clampedDuration = Number.isFinite(actualDuration) && actualDuration > 0
+        ? actualDuration
+        : Math.max(duration, 0.1)
+      const safeTime = Math.min(Math.max(time, 0), Math.max(clampedDuration - 0.05, 0))
+      video.currentTime = safeTime
+    })
+  }
+
+  const cleanupVideo = () => {
+    video.pause()
+    video.removeAttribute('src')
+    video.load()
+  }
+
+  video.src = `file://${videoPath}`
+  video.muted = true
+
+  const thumbnails: string[] = []
+
+  try {
+    await waitForMetadata()
+
+    const metadataDuration = Number.isFinite(video.duration) && video.duration > 0
+      ? video.duration
+      : null
+    actualDuration = metadataDuration ?? (Number.isFinite(duration) && duration > 0 ? duration : 1)
+
+    // Determine how many frames to capture based on clip length
+    const frameCount = Math.min(12, Math.max(1, Math.round(actualDuration / 2)))
+    const segmentLength = actualDuration / frameCount
+
+    for (let i = 0; i < frameCount; i++) {
+      const targetTime = frameCount === 1
+        ? actualDuration / 2
+        : segmentLength * i + segmentLength / 2
+
+      try {
+        await captureFrame(targetTime, thumbnails)
+      } catch (frameError) {
+        console.warn('[Timeline] Failed to capture thumbnail frame:', frameError)
+
+        // Attempt a single fallback frame if nothing has been captured yet
+        if (thumbnails.length === 0 && i === 0) {
+          try {
+            await captureFrame(0.1, thumbnails)
+          } catch (fallbackError) {
+            console.error('[Timeline] Fallback thumbnail capture failed:', fallbackError)
+            break
+          }
+        } else {
+          break
+        }
+      }
+    }
+  } finally {
+    cleanupVideo()
+  }
+
+  return thumbnails
 }
 
 // Handle drag and drop from media library
@@ -130,8 +201,16 @@ const handleDrop = async (e: DragEvent) => {
       return
     }
 
-    // Generate thumbnail
-    const thumbnail = await generateThumbnail(clip.path)
+    // Generate thumbnails for the clip
+    let thumbnailFrames: string[] = []
+
+    try {
+      thumbnailFrames = await generateThumbnails(clip.path, clip.duration)
+    } catch (thumbError) {
+      console.error('[Timeline] Failed to generate thumbnails for clip:', thumbError)
+    }
+
+    const primaryThumbnail = thumbnailFrames[0] ?? ''
 
     // Calculate position at the end of timeline
     const startTime = timelineStore.totalDuration
@@ -146,7 +225,8 @@ const handleDrop = async (e: DragEvent) => {
       trimStart: 0,
       trimEnd: clip.duration,
       track: 0,
-      thumbnail: thumbnail
+      thumbnail: primaryThumbnail,
+      thumbnailFrames
     }
 
     timelineStore.addClipToTimeline(timelineClip)
@@ -402,7 +482,41 @@ const splitClipAtPlayhead = async () => {
   // Create two new clips
   const clip1Duration = splitTimeInClip
   const clip2Duration = clipToSplit.duration - splitTimeInClip
-  
+
+  // Split existing thumbnails proportionally between the new clips
+  const originalFrames = clipToSplit.thumbnailFrames ?? []
+  let clip1Frames: string[] | undefined
+  let clip2Frames: string[] | undefined
+
+  if (originalFrames.length > 0) {
+    const totalFrames = originalFrames.length
+    const clip1Ratio = clip1Duration / clipToSplit.duration
+
+    let clip1Count = Math.max(1, Math.round(totalFrames * clip1Ratio))
+    clip1Count = Math.min(clip1Count, totalFrames)
+
+    let clip2Count = totalFrames - clip1Count
+
+    if (clip2Count === 0 && totalFrames > 1) {
+      clip2Count = 1
+      clip1Count = Math.max(1, totalFrames - clip2Count)
+    }
+
+    clip1Frames = originalFrames.slice(0, clip1Count)
+    clip2Frames = originalFrames.slice(clip1Count)
+
+    if (clip1Frames.length === 0 && clip2Frames.length > 0) {
+      clip1Frames = [clip2Frames[0]]
+    }
+
+    if (clip2Frames.length === 0 && clip1Frames.length > 0) {
+      clip2Frames = [clip1Frames[clip1Frames.length - 1]]
+    }
+  }
+
+  const clip1Thumbnail = clip1Frames && clip1Frames.length > 0 ? clip1Frames[0] : clipToSplit.thumbnail
+  const clip2Thumbnail = clip2Frames && clip2Frames.length > 0 ? clip2Frames[0] : clipToSplit.thumbnail
+
   const clip1: TimelineClip = {
     id: `timeline-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
     clipId: clipToSplit.clipId,
@@ -412,9 +526,10 @@ const splitClipAtPlayhead = async () => {
     trimStart: clipToSplit.trimStart,
     trimEnd: clipToSplit.trimStart + clip1Duration,
     track: clipToSplit.track,
-    thumbnail: clipToSplit.thumbnail
+    thumbnail: clip1Thumbnail,
+    thumbnailFrames: clip1Frames
   }
-  
+
   const clip2: TimelineClip = {
     id: `timeline-${Date.now() + 1}-${Math.random().toString(36).substr(2, 9)}`,
     clipId: clipToSplit.clipId,
@@ -424,7 +539,8 @@ const splitClipAtPlayhead = async () => {
     trimStart: clipToSplit.trimStart + clip1Duration,
     trimEnd: clipToSplit.trimEnd,
     track: clipToSplit.track,
-    thumbnail: clipToSplit.thumbnail
+    thumbnail: clip2Thumbnail,
+    thumbnailFrames: clip2Frames
   }
   
   // Remove original clip
@@ -628,11 +744,36 @@ const splitClipAtPlayhead = async () => {
                 dropTargetIndex === index ? 'ring-2 ring-blue-500' : ''
               ]"
             >
-              <!-- Thumbnail -->
-              <div
-                class="absolute inset-0 bg-cover bg-center"
-                :style="{ backgroundImage: `url(${clip.thumbnail})` }"
-              ></div>
+              <!-- Thumbnail filmstrip -->
+              <div class="absolute inset-0 overflow-hidden">
+                <div
+                  v-if="clip.thumbnailFrames && clip.thumbnailFrames.length > 0"
+                  class="grid h-full w-full"
+                  :style="{ gridTemplateColumns: `repeat(${clip.thumbnailFrames.length}, minmax(0, 1fr))` }"
+                >
+                  <div
+                    v-for="(frame, frameIndex) in clip.thumbnailFrames"
+                    :key="frameIndex"
+                    class="relative h-full w-full"
+                  >
+                    <img
+                      :src="frame"
+                      alt=""
+                      class="h-full w-full object-cover select-none pointer-events-none"
+                      draggable="false"
+                    />
+                    <div
+                      v-if="frameIndex < clip.thumbnailFrames.length - 1"
+                      class="absolute top-0 right-0 h-full w-px bg-black/30"
+                    ></div>
+                  </div>
+                </div>
+                <div
+                  v-else
+                  class="h-full w-full bg-cover bg-center"
+                  :style="clip.thumbnail ? { backgroundImage: `url(${clip.thumbnail})` } : {}"
+                ></div>
+              </div>
               
               <!-- Overlay with clip info -->
               <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent flex flex-col justify-end p-2">

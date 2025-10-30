@@ -10,7 +10,8 @@ export interface TimelineClip {
   trimStart: number // Where to start playing from (in seconds)
   trimEnd: number // Where to stop playing (in seconds)
   track: number // For multi-track support later
-  thumbnail: string // Data URL of thumbnail image
+  thumbnail: string // Primary thumbnail for quick display
+  thumbnailFrames?: string[] // Optional filmstrip thumbnails spanning the clip
 }
 
 /**
