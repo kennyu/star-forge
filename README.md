@@ -1,6 +1,6 @@
 # Star-Forge
 
-**A powerful desktop video editor built with Electron, Vue 3, and FFmpeg**
+A desktop video editor built with Electron, Vue 3, and FFmpeg.
 
 [![Electron](https://img.shields.io/badge/Electron-32.0-blue.svg)](https://www.electronjs.org/)
 [![Vue](https://img.shields.io/badge/Vue-3.4-brightgreen.svg)](https://vuejs.org/)
@@ -9,7 +9,7 @@
 
 ## Overview
 
-Star-Forge is a lightweight, performant desktop video editor that enables users to import, arrange, and export videos with ease. Built for speed and simplicity, it provides a professional editing experience without the bloat of traditional video editing software.
+Star-Forge is a lightweight desktop video editor for importing, arranging, and exporting video content. It provides essential video editing capabilities with a clean interface, powered by FFmpeg for professional-grade video processing.
 
 ## Features
 
@@ -100,94 +100,126 @@ graph TB
 
 ### Prerequisites
 
-- **Node.js** (v18 or higher)
-- **npm** (v9 or higher)
-- **FFmpeg** (automatically bundled with the app)
+- Node.js (v18 or higher)
+- npm (v9 or higher)
+
+FFmpeg binaries are automatically bundled with the application and do not need to be installed separately.
 
 ### Installation
 
+Clone the repository and install dependencies:
+
 ```bash
-# Clone the repository
 git clone https://github.com/yourusername/Star-Forge.git
 cd Star-Forge
-
-# Install dependencies
 npm install
 ```
 
 ### Development
 
+Start the development server:
+
 ```bash
-# Start the development server with hot-reload
+# Option 1: Vite dev server only
 npm run dev
 
-# Or run in Electron development mode
+# Option 2: Full Electron development mode (recommended)
 npm run electron:dev
 ```
 
-The application will launch in development mode with hot-reload enabled and DevTools open.
+The Electron development mode launches the application with hot-reload and DevTools enabled.
 
 ## Building for Production
 
-### Quick Build
+### Build Process
+
+To build a distributable application for your current platform:
 
 ```bash
-# Build for your current platform
 npm run build
 ```
 
-This will:
-1. Build the Vue frontend with Vite
-2. Compile the Electron main process with TypeScript
+This command will:
+1. Compile the Vue 3 frontend using Vite
+2. Build the Electron main process with TypeScript
 3. Package the application with electron-builder
-4. Output distributable files to the `release/` folder
+4. Output distributable files to the `release/` directory
 
-### Platform-Specific Builds
+### Build Output by Platform
 
 #### Windows
 
 ```bash
 npm run build
-# Output: release/Star-Forge Setup 1.0.0.exe (installer)
-#         release/win-unpacked/ (unpacked application directory)
 ```
 
-The Windows build creates an NSIS installer and an unpacked directory containing the application files.
+Output:
+- `release/Star-Forge 1.0.0.exe` - Portable executable
+- `release/win-unpacked/` - Unpacked application directory
+
+The portable executable can be run directly without installation.
 
 #### macOS
 
 ```bash
 npm run build
-# Output: release/Star-Forge-1.0.0.dmg
 ```
 
-**Note:** macOS builds can only be created on macOS due to Apple's code-signing requirements.
+Output:
+- `release/Star-Forge-1.0.0.dmg` - Disk image installer
+
+Note: macOS builds must be created on a Mac due to code-signing requirements. Cross-platform builds from Windows or Linux are not supported.
 
 #### Linux
 
 ```bash
 npm run build
-# Output: 
-# - release/Star-Forge-1.0.0.AppImage (portable application)
-# - release/Star-Forge_1.0.0_amd64.deb (Debian package)
 ```
+
+Output:
+- `release/Star-Forge-1.0.0.AppImage` - Portable application
+- `release/Star-Forge_1.0.0_amd64.deb` - Debian package
+
+The AppImage can be run directly after making it executable. The `.deb` package can be installed using `dpkg` or a package manager.
+
+### Additional Build Commands
+
+```bash
+npm run build:check        # Build with TypeScript type checking before packaging
+npm run electron:build     # Same as npm run build
+npm run preview            # Preview production build (frontend only)
+```
+
+## Deployment
+
+### Distribution
+
+After building, distribute the appropriate file for your target platform:
+
+- **Windows**: Distribute `Star-Forge 1.0.0.exe`
+- **macOS**: Distribute `Star-Forge-1.0.0.dmg`
+- **Linux**: Distribute `Star-Forge-1.0.0.AppImage` or `Star-Forge_1.0.0_amd64.deb`
+
+### Code Signing (Optional)
+
+For production releases, consider code signing:
+
+- **Windows**: Use a code signing certificate and configure `electron-builder` with `certificateFile` and `certificatePassword`
+- **macOS**: Configure Apple Developer ID and notarization in `electron-builder`
+- **Linux**: AppImage and .deb packages do not require signing for distribution
+
+Refer to the [electron-builder documentation](https://www.electron.build/code-signing) for detailed code signing instructions.
 
 ### Build Configuration
 
-The build is configured in `package.json` under the `"build"` section:
+Build settings are configured in `package.json` under the `build` section:
 
-- **App ID**: `com.Star-Forge.app`
-- **Product Name**: Star-Forge
-- **FFmpeg Binaries**: Automatically included and unpacked from ASAR for runtime access
-- **Output Directory**: `release/`
+- App ID: `com.starforge.app`
+- Product Name: `Star-Forge`
+- FFmpeg Binaries: Automatically included and unpacked from ASAR archive
+- Output Directory: `release/`
 
-### Build Scripts
-
-```bash
-npm run build              # Full build and package
-npm run build:check        # Build with TypeScript type checking
-npm run electron:build     # Build Electron app only (no type checking)
-```
+The FFmpeg and FFprobe binaries are extracted from the ASAR package at runtime to enable video processing capabilities.
 
 ## Project Structure
 
@@ -279,125 +311,112 @@ Star-Forge/
 - **Space** - Play/Pause preview
 - **Delete** - Remove selected clip from timeline
 
-## Development Scripts
+## Available Scripts
 
 ```bash
 # Development
-npm run dev              # Start Vite dev server
-npm run electron:dev     # Start Electron in dev mode
+npm run dev              # Start Vite development server
+npm run electron:dev     # Run full application in development mode
 
-# Building
-npm run build            # Build and package for current platform
+# Production Build
+npm run build            # Build and package application
 npm run build:check      # Build with TypeScript type checking
-npm run electron:build   # Build Electron app only
+npm run electron:build   # Build application (alias for npm run build)
 
-# Preview
+# Testing
 npm run preview          # Preview production build
 ```
 
 ## Configuration
 
-### FFmpeg Configuration
+### FFmpeg
 
-FFmpeg binaries are automatically included in the build through:
-- `@ffmpeg-installer/ffmpeg` - FFmpeg binary for video processing
-- `ffprobe-static` - FFprobe binary for metadata extraction
+FFmpeg and FFprobe binaries are automatically bundled through npm packages:
+- `@ffmpeg-installer/ffmpeg` - Video processing
+- `ffprobe-static` - Metadata extraction
 
-These are configured in `package.json`:
-```json
-"asarUnpack": [
-  "node_modules/@ffmpeg-installer/**/*",
-  "node_modules/ffprobe-static/**/*"
-]
-```
-
-This ensures FFmpeg binaries are unpacked and accessible at runtime.
+The binaries are configured to be unpacked from the ASAR archive at runtime via the `asarUnpack` setting in `package.json`. No manual configuration is required.
 
 ### Environment Variables
 
-No environment variables are required for basic operation. FFmpeg paths are automatically resolved at runtime based on the installation location.
+No environment variables are required. FFmpeg paths are resolved automatically at runtime.
 
 ## Troubleshooting
 
-### FFmpeg Not Found
+### Build Issues
 
-If you see errors about FFmpeg not being found:
-1. Ensure `asarUnpack` in `package.json` includes FFmpeg paths (already configured by default)
-2. Rebuild the application: `npm run build`
-
-### Build Fails
+If the build fails, clean the project and rebuild:
 
 ```bash
-# Clean and rebuild
+# Windows (PowerShell)
+Remove-Item -Recurse -Force node_modules, dist, dist-electron, release
+npm install
+npm run build
+
+# macOS/Linux
 rm -rf node_modules dist dist-electron release
 npm install
 npm run build
 ```
 
-On Windows (PowerShell):
-```powershell
-Remove-Item -Recurse -Force node_modules, dist, dist-electron, release
-npm install
-npm run build
-```
+### FFmpeg Not Found
 
-### Video Won't Play in Preview
+If FFmpeg errors occur:
+1. Verify `asarUnpack` in `package.json` includes FFmpeg paths
+2. Rebuild the application with `npm run build`
 
-- Verify video codec is H.264 (most compatible with HTML5 video)
-- Check browser console (DevTools) for errors
-- Ensure the file path is accessible
-- Try re-importing the file
+### Video Playback Issues
 
-### Export Progress Shows 0%
+- Ensure video codec is H.264 for HTML5 compatibility
+- Check DevTools console for errors
+- Verify file path is accessible
+- Re-import the file if issues persist
 
-- This is normal for the first few seconds while FFmpeg initializes
-- Progress updates appear once FFmpeg begins encoding
-- Check console logs for detailed FFmpeg output
+### Export Issues
 
-### Export Fails with "Output filename matches input"
+**Progress shows 0%**: Normal during FFmpeg initialization. Progress updates appear once encoding begins.
 
-- The output filename cannot be the same as any input clip
-- Choose a different output filename or location
-- Remove the conflicting clip from the timeline before exporting
+**"Output filename matches input" error**: Choose a different output filename or location. Output cannot overwrite input files.
+
+**Export fails**: Check console logs for detailed FFmpeg error messages.
 
 ## Contributing
 
-Contributions are welcome! Please follow these steps:
+Contributions are welcome. To contribute:
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
+2. Create a feature branch (`git checkout -b feature/feature-name`)
+3. Commit your changes (`git commit -m 'Add feature'`)
+4. Push to the branch (`git push origin feature/feature-name`)
 5. Open a Pull Request
 
-### Development Guidelines
+### Guidelines
 
-- Follow the existing code style
+- Follow existing code style and conventions
 - Add TypeScript types for all new code
 - Test on multiple platforms when possible
 - Update documentation for new features
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
-- **Electron** - For enabling cross-platform desktop development
-- **Vue.js** - For the reactive and intuitive frontend framework
-- **FFmpeg** - For powerful video processing capabilities
-- **Tailwind CSS** - For rapid UI development with utility classes
-- **Video.js** - For robust HTML5 video playback
+Built with:
+- Electron - Cross-platform desktop framework
+- Vue.js - Reactive frontend framework
+- FFmpeg - Video processing
+- Tailwind CSS - UI styling
+- Video.js - HTML5 video playback
 
 ## Support
 
-For issues, questions, or suggestions:
-- Open an issue on [GitHub Issues](https://github.com/yourusername/Star-Forge/issues)
-- Check existing documentation in this README
+For issues or questions, open an issue on [GitHub Issues](https://github.com/yourusername/Star-Forge/issues).
 
 ## Roadmap
 
-### Current Features (v1.0)
+### Version 1.0 (Current)
 - Multi-format video import
 - Timeline editing with drag-and-drop
 - Video trimming
@@ -406,19 +425,13 @@ For issues, questions, or suggestions:
 - Quality presets (720p, 1080p, source)
 
 ### Planned Features
-- Screen recording with desktop capturer
+- Screen recording
 - Webcam overlay support
 - Text overlays and titles
-- Transitions (fade, slide, dissolve)
-- Audio controls (volume, fade in/out)
+- Transitions between clips
+- Audio controls
 - Multiple timeline tracks
 - Undo/redo functionality
-- Auto-save and project files
-- Export presets (YouTube, TikTok, Instagram)
+- Project file save/load
+- Additional export presets
 - Keyboard shortcut customization
-
----
-
-**Made with Vue, Electron, and FFmpeg**
-
-[Report Bug](https://github.com/yourusername/Star-Forge/issues) · [Request Feature](https://github.com/yourusername/Star-Forge/issues) · [Documentation](https://github.com/yourusername/Star-Forge/wiki)
