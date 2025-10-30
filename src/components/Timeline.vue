@@ -52,7 +52,11 @@ const timelinePadding = computed(() => {
 })
 
 // Generate a filmstrip of thumbnails from a video file
-async function generateThumbnails(videoPath: string, duration: number): Promise<string[]> {
+async function generateThumbnails(
+  videoPath: string, 
+  duration: number,
+  onProgress?: (thumbnail: string, index: number, thumbnails: string[]) => void
+): Promise<string[]> {
   if (!hiddenVideoRef.value || !hiddenCanvasRef.value) {
     throw new Error('Video or canvas ref not available')
   }
@@ -155,6 +159,11 @@ async function generateThumbnails(videoPath: string, duration: number): Promise<
 
       try {
         await captureFrame(targetTime, thumbnails)
+        
+        // Call progress callback after each thumbnail is captured
+        if (onProgress && thumbnails.length > 0) {
+          onProgress(thumbnails[thumbnails.length - 1], i, [...thumbnails])
+        }
       } catch (frameError) {
         console.warn('[Timeline] Failed to capture thumbnail frame:', frameError)
 
@@ -162,6 +171,11 @@ async function generateThumbnails(videoPath: string, duration: number): Promise<
         if (thumbnails.length === 0 && i === 0) {
           try {
             await captureFrame(0.1, thumbnails)
+            
+            // Call progress callback for fallback frame too
+            if (onProgress && thumbnails.length > 0) {
+              onProgress(thumbnails[thumbnails.length - 1], 0, [...thumbnails])
+            }
           } catch (fallbackError) {
             console.error('[Timeline] Fallback thumbnail capture failed:', fallbackError)
             break
@@ -251,23 +265,13 @@ const handleDrop = async (e: DragEvent) => {
       return
     }
 
-    // Generate thumbnails for the clip
-    let thumbnailFrames: string[] = []
-
-    try {
-      thumbnailFrames = await generateThumbnails(clip.path, clip.duration)
-    } catch (thumbError) {
-      console.error('[Timeline] Failed to generate thumbnails for clip:', thumbError)
-    }
-
-    const primaryThumbnail = thumbnailFrames[0] ?? ''
-
     // Calculate position at the end of timeline
     const startTime = timelineStore.totalDuration
+    const newClipId = generateClipId()
 
-    // Create timeline clip
+    // Create timeline clip IMMEDIATELY with placeholder
     const timelineClip: TimelineClip = {
-      id: generateClipId(),
+      id: newClipId,
       clipId: clip.id,
       name: clip.name,
       startTime: startTime,
@@ -275,12 +279,42 @@ const handleDrop = async (e: DragEvent) => {
       trimStart: 0,
       trimEnd: clip.duration,
       track: 0,
-      thumbnail: primaryThumbnail,
-      thumbnailFrames
+      thumbnail: '',
+      thumbnailFrames: [],
+      isLoadingThumbnails: true
     }
 
+    // Add to timeline immediately for instant feedback
     timelineStore.addClipToTimeline(timelineClip)
-    timelineStore.reorderClips() // Auto-arrange sequentially
+    timelineStore.reorderClips()
+
+    // Generate thumbnails with progress callback
+    try {
+      await generateThumbnails(
+        clip.path, 
+        clip.duration,
+        // Progress callback - updates clip as each thumbnail is generated
+        (thumbnail, index, allThumbnails) => {
+          const updates: Partial<TimelineClip> = {
+            thumbnailFrames: allThumbnails
+          }
+          // Set primary thumbnail on first frame
+          if (index === 0) {
+            updates.thumbnail = thumbnail
+          }
+          timelineStore.updateClip(newClipId, updates)
+        }
+      )
+      
+      // Mark loading as complete
+      timelineStore.updateClip(newClipId, { isLoadingThumbnails: false })
+      
+    } catch (thumbError) {
+      console.error('[Timeline] Failed to generate thumbnails for clip:', thumbError)
+      // Mark as done even if failed
+      timelineStore.updateClip(newClipId, { isLoadingThumbnails: false })
+    }
+
   } catch (error) {
     console.error('Failed to add clip to timeline:', error)
   }
@@ -810,8 +844,25 @@ const splitClipAtPlayhead = () => {
             >
               <!-- Thumbnail filmstrip -->
               <div class="absolute inset-0 overflow-hidden">
+                <!-- Loading State: Show while thumbnails are being generated -->
                 <div
-                  v-if="clip.thumbnailFrames && clip.thumbnailFrames.length > 0"
+                  v-if="clip.isLoadingThumbnails && (!clip.thumbnailFrames || clip.thumbnailFrames.length === 0)"
+                  class="h-full w-full bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center"
+                >
+                  <div class="text-center">
+                    <div class="animate-pulse text-white/60 mb-2">
+                      <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    </div>
+                    <span class="text-xs text-white/60">Loading thumbnails...</span>
+                  </div>
+                </div>
+                
+                <!-- Thumbnail filmstrip: Shows thumbnails as they load -->
+                <div
+                  v-else-if="clip.thumbnailFrames && clip.thumbnailFrames.length > 0"
                   class="grid h-full w-full"
                   :style="{ gridTemplateColumns: `repeat(${clip.thumbnailFrames.length}, minmax(0, 1fr))` }"
                 >
@@ -832,9 +883,11 @@ const splitClipAtPlayhead = () => {
                     ></div>
                   </div>
                 </div>
+                
+                <!-- Fallback: Show single thumbnail or empty state -->
                 <div
                   v-else
-                  class="h-full w-full bg-cover bg-center"
+                  class="h-full w-full bg-cover bg-center bg-gray-700"
                   :style="clip.thumbnail ? { backgroundImage: `url(${clip.thumbnail})` } : {}"
                 ></div>
               </div>
