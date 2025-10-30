@@ -210,6 +210,19 @@ async function loadAndPlayCurrentClip() {
     player.value?.load()
   })
   
+  // Wait for seek to complete before allowing UI updates
+  await new Promise<void>((resolve) => {
+    const onSeeked = () => {
+      if (player.value) {
+        player.value.off('seeked', onSeeked)
+        // Mark clip as ready - allows timeupdate events to update UI
+        playbackStore.markClipReady()
+        resolve()
+      }
+    }
+    player.value?.on('seeked', onSeeked)
+  })
+  
   // Start playing
   try {
     await player.value.play()

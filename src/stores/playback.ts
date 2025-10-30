@@ -41,6 +41,9 @@ export const usePlaybackStore = defineStore('playback', () => {
   
   /** Time to stop playing within the current video source (accounting for trim) */
   const currentVideoEndTime = ref(0)
+  
+  /** Flag to indicate we're loading a new clip (prevents UI jumps during seek) */
+  const isLoadingClip = ref(false)
 
   // ============================================================================
   // Computed
@@ -152,6 +155,9 @@ export const usePlaybackStore = defineStore('playback', () => {
   function updateTime(videoTime: number) {
     if (!isPlaying.value || !currentTimelineClip.value) return
     
+    // Ignore stale timeupdate events while loading a new clip (prevents UI jumps)
+    if (isLoadingClip.value) return
+    
     const clip = currentTimelineClip.value
     
     // Calculate timeline position from video time
@@ -183,6 +189,9 @@ export const usePlaybackStore = defineStore('playback', () => {
       return
     }
     
+    // Set loading flag to prevent UI jumps from stale timeupdate events
+    isLoadingClip.value = true
+    
     // Calculate where to start playing within the source video
     const timeInTimeline = currentTime.value - timelineClip.startTime
     const startTimeInSource = timelineClip.trimStart + Math.max(0, timeInTimeline)
@@ -190,6 +199,13 @@ export const usePlaybackStore = defineStore('playback', () => {
     currentVideoSource.value = sourceClip.path
     currentVideoStartTime.value = startTimeInSource
     currentVideoEndTime.value = timelineClip.trimEnd
+  }
+  
+  /**
+   * Mark clip as ready (called by VideoPlayer after seek completes)
+   */
+  function markClipReady() {
+    isLoadingClip.value = false
   }
   
   /**
@@ -275,6 +291,7 @@ export const usePlaybackStore = defineStore('playback', () => {
     currentVideoSource,
     currentVideoStartTime,
     currentVideoEndTime,
+    isLoadingClip,
     
     // Computed
     currentTimelineClip,
@@ -290,6 +307,7 @@ export const usePlaybackStore = defineStore('playback', () => {
     advanceToNextClip,
     getClipAtTime,
     reset,
+    markClipReady,
   }
 })
 

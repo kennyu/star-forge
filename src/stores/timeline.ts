@@ -12,6 +12,7 @@ export interface TimelineClip {
   track: number // For multi-track support later
   thumbnail: string // Primary thumbnail for quick display
   thumbnailFrames?: string[] // Optional filmstrip thumbnails spanning the clip
+  isLoadingThumbnails?: boolean // Track thumbnail generation progress
 }
 
 /**
